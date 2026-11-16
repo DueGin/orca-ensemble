@@ -1,4 +1,4 @@
-// The Agent Team panel in Orca's right sidebar: the focused workspace's team session (mode, brief to confirm, members,
+// The Ensemble panel in Orca's right sidebar: the focused workspace's team session (mode, brief to confirm, members,
 // the run's data flow and its components), starting a session, and the project's teams and presets.
 import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

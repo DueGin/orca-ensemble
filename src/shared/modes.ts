@@ -88,7 +88,9 @@ export const MEMBER_TOOLS = {
 } as const;
 
 /** Prefix of every message the plugin types into an agent, so they can be told from the user's own. */
-export const PLUGIN_MESSAGE_PREFIX = "[agent-team]";
+export const PLUGIN_MESSAGE_PREFIX = "[ensemble]";
+/** Plugin messages from before the rename to Ensemble start with this. */
+export const LEGACY_MESSAGE_PREFIX = "[agent-team]";
 
 /** Languages the plugin writes agent instructions in; the agents reply in it too. */
 export const PROMPT_LANGUAGES = ["zh", "en"] as const;

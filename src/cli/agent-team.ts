@@ -80,7 +80,7 @@ async function main(): Promise<number> {
       process.stderr.write(`agent-team: the plugin restarted while running "${command}". It may or may not have been done: run \`agent-team status\` to check before trying again.\n`);
       return 3;
     }
-    process.stderr.write("agent-team: the Agent Team plugin is not running in Orca (enable it in Settings → Plugins), so the team can't be reached.\n");
+    process.stderr.write("agent-team: the Ensemble plugin is not running in Orca (enable it in Settings → Plugins), so the team can't be reached.\n");
     return 2;
   }
 }

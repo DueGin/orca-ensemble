@@ -25,7 +25,7 @@ export function plannerPrompt(goal: string, file: string, language: PromptLangua
   const agents = KNOWN_AGENTS.join(" ");
   if (language === "zh") {
     return [
-      "[agent-team] 请为这个项目设计一个智能体团队，并把它写成团队文件。团队由一个协调器带领，成员在协调器的工作区里各自运行在自己的 agent CLI 和模型上。",
+      "[ensemble] 请为这个项目设计一个智能体团队，并把它写成团队文件。团队由一个协调器带领，成员在协调器的工作区里各自运行在自己的 agent CLI 和模型上。",
       given ? `目标：${given}` : "没有给出目标：请先阅读项目（README、目录结构、主要源码），弄清它是什么、需要哪些工作，再写出目标。",
       "",
       "## 步骤",
@@ -45,7 +45,7 @@ export function plannerPrompt(goal: string, file: string, language: PromptLangua
     ].join("\n");
   }
   return [
-    "[agent-team] Design an agent team for this project and write it as a team file. A lead runs the team; each member runs in the lead's workspace on its own agent CLI and model.",
+    "[ensemble] Design an agent team for this project and write it as a team file. A lead runs the team; each member runs in the lead's workspace on its own agent CLI and model.",
     given ? `Goal: ${given}` : "No goal was given: first read the project (README, layout, main sources) to work out what it is and what work it needs, then write the goal yourself.",
     "",
     "## Steps",

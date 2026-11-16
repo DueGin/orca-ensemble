@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { excerpt, taskOf, type Run } from "../shared/collab";
-import { effectiveMode, isPromptLanguage, isTeamMode, languageFromLocale, type PromptLanguage, type TeamMode } from "../shared/modes";
+import { effectiveMode, isPromptLanguage, isTeamMode, languageFromLocale, PLUGIN_MESSAGE_PREFIX, type PromptLanguage, type TeamMode } from "../shared/modes";
 import { promptsFor } from "../shared/prompts";
 import { plannerPrompt } from "../shared/planner";
 import { teamFileName, TEAMS_DIR } from "../shared/team";
@@ -125,8 +125,8 @@ async function runReportFile(lead: LeadSession, runId: string): Promise<string> 
   const relative = `.agents/runs/${runId}.team-run.json`;
   await mkdir(join(lead.path, ".agents", "runs"), { recursive: true });
   const ignore = join(lead.path, ".agents", ".gitignore");
-  if (!existsSync(ignore)) await writeFile(ignore, "# Agent Team plugin: run report links are local; team files are shared.\nruns/\n").catch(() => undefined);
-  await writeFile(join(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Agent Team run report. The run itself is kept by the plugin." }, null, 2) + "\n");
+  if (!existsSync(ignore)) await writeFile(ignore, "# Ensemble plugin: run report links are local; team files are shared.\nruns/\n").catch(() => undefined);
+  await writeFile(join(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Ensemble run report. The run itself is kept by the plugin." }, null, 2) + "\n");
   return relative;
 }
 
@@ -232,7 +232,7 @@ export function createApi(deps: ApiDeps) {
     const sourceLabel = source.kind === "file" ? source.file : source.kind === "preset" ? `the preset "${teamTitle(team)}"` : "the team chosen at start";
     const prompt = P.leadStartPrompt(team, sourceLabel, input.request);
     const systemPrompt = P.orchestratorPrompt(team, sourceLabel);
-    const marked = `[agent-team:${launchId}]\n${prompt}`;
+    const marked = `[ensemble:${launchId}]\n${prompt}`;
     const base = { projectId: null, projectName: "", source, team, language, mode: override, locked: null, roles: [], brief: null };
     if (input.newWorkspace && input.projectPath) {
       await store.addLaunch({ id: launchId, kind: "lead", prompt, systemPrompt, lead: { ...base, workspaceId: null, path: "" }, createdAt: new Date().toISOString() });
@@ -301,8 +301,8 @@ export function createApi(deps: ApiDeps) {
     if (!lead?.brief) return { ok: false, notified: false };
     await store.setPendingBrief(input.terminalId, { ...lead.brief, confirmedBy: "panel" });
     const text = lead.language === "zh"
-      ? `${"[agent-team]"} 用户在「智能体团队」面板里确认了需求简报和任务计划。现在运行 agent-team kickoff，userConfirmation 填 "confirmed in panel"。`
-      : `[agent-team] The user confirmed the brief and task plan in the Agent Team panel. Run agent-team kickoff now, with userConfirmation "confirmed in panel".`;
+      ? `${PLUGIN_MESSAGE_PREFIX} 用户在「智能体团队」面板里确认了需求简报和任务计划。现在运行 agent-team kickoff，userConfirmation 填 "confirmed in panel"。`
+      : `${PLUGIN_MESSAGE_PREFIX} The user confirmed the brief and task plan in the Ensemble panel. Run agent-team kickoff now, with userConfirmation "confirmed in panel".`;
     const notified = await adapter.send(input.terminalId, text);
     return { ok: true, notified };
   }
@@ -350,7 +350,7 @@ export function createApi(deps: ApiDeps) {
       const launchId = newLaunchId();
       const prompt = plannerPrompt(goal, file, lang);
       await store.addLaunch({ id: launchId, kind: "planner", prompt, systemPrompt: "", planner: { root, file, goal }, createdAt: new Date().toISOString() });
-      const { terminalId } = await adapter.launch({ path: root, agent: agent || "claude", model, prompt: `[agent-team:${launchId}]\n${prompt}`, focus: false });
+      const { terminalId } = await adapter.launch({ path: root, agent: agent || "claude", model, prompt: `[ensemble:${launchId}]\n${prompt}`, focus: false });
       if (!store.planner(terminalId)) await store.setPlanner({ terminalId, root, file, goal, status: "planning", errors: [], startedAt: new Date().toISOString(), endedAt: null });
       return { terminalId, file };
     },

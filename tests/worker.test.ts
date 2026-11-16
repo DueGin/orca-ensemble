@@ -227,7 +227,7 @@ describe("the launch hook", () => {
 
   it("ties a launch to its terminal, drops the marker, and gives Claude its standing instructions", async () => {
     await store.addLaunch({ id: "L0000ABCD", kind: "member", prompt: "the task", systemPrompt: "You are writer", member: { leadTerminalId: "lead1", role: "writer", agent: "claude", model: "haiku", title: "writer#1" }, createdAt: new Date().toISOString() });
-    const event = await onAgentLaunch(deps(), { agent: "claude", workspaceId: "p::/repo", terminalId: "t9", command: `claude '--model' 'haiku' '[agent-team:L0000ABCD]\nthe task'`, env: {} });
+    const event = await onAgentLaunch(deps(), { agent: "claude", workspaceId: "p::/repo", terminalId: "t9", command: `claude '--model' 'haiku' '[ensemble:L0000ABCD]\nthe task'`, env: {} });
     expect(shellWords(event.command)).toEqual(["claude", "--model", "haiku", "--append-system-prompt", "You are writer", "the task"]);
     expect(store.member("t9")?.role).toBe("writer");
   });

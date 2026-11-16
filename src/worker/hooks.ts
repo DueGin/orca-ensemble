@@ -49,7 +49,7 @@ export function shellQuote(word: string): string {
   return `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
-export const LAUNCH_MARKER = /^\[agent-team:(L[0-9A-F]{8})\]\n?/;
+export const LAUNCH_MARKER = /^\[ensemble:(L[0-9A-F]{8})\]\n?/;
 /** `@team [name] [mode]` on the first line of a new agent's first prompt. */
 export const TEAM_DIRECTIVE = /^@team(?:[ \t]+([^\n]*))?(?:\n|$)/i;
 

@@ -45,7 +45,7 @@
     },
     on: () => ({ dispose() {} }),
     document: {
-      get: async () => ({ version: 1, readOnly: false, content: { kind: "text", text: params.get("doc") ?? JSON.stringify({ agentTeamRun: runId, note: "Opens the Agent Team run report." }) } }),
+      get: async () => ({ version: 1, readOnly: false, content: { kind: "text", text: params.get("doc") ?? JSON.stringify({ agentTeamRun: runId, note: "Opens the Ensemble run report." }) } }),
       onDidChange: () => ({ dispose() {} }),
       applyEdit: async () => { throw new Error("the run report must not edit its document"); },
     },

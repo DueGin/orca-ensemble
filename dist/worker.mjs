@@ -63,7 +63,8 @@ var MEMBER_TOOLS = {
   task: `${TEAM_BIN} task`,
   report: `${TEAM_BIN} report`
 };
-var PLUGIN_MESSAGE_PREFIX = "[agent-team]";
+var PLUGIN_MESSAGE_PREFIX = "[ensemble]";
+var LEGACY_MESSAGE_PREFIX = "[agent-team]";
 var PROMPT_LANGUAGES = ["zh", "en"];
 function languageFromLocale(locale2) {
   return (locale2 ?? "").toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -80,10 +81,10 @@ function rootKey(pluginRoot2) {
   return createHash("sha256").update(pluginRoot2).digest("hex").slice(0, 12);
 }
 function socketPath(pluginRoot2) {
-  return `/tmp/orca-agent-team-${rootKey(pluginRoot2)}.sock`;
+  return `/tmp/orca-ensemble-${rootKey(pluginRoot2)}.sock`;
 }
 function dataDir(pluginRoot2) {
-  return join(homedir(), ".orca-agent-team", rootKey(pluginRoot2));
+  return join(homedir(), ".orca-ensemble", rootKey(pluginRoot2));
 }
 var ENV = {
   socket: "AGENT_TEAM_SOCKET",
@@ -903,11 +904,13 @@ function runSummary(run) {
   return [head, ...members2.length ? members2 : [`- ${w.noMembers}`], ...claims, run.tasks.length ? taskBoardText(run) : "", run.mode === "team" ? w.board(run.posts.length, run.posts.filter((post) => post.seq > run.leadReadSeq).length) : ""].filter(Boolean).join("\n");
 }
 var squash = (text) => text.toLowerCase().replace(/\s+/g, " ").replace(/^["'“”「」『』]+|["'“”「」『』]+$/g, "").trim();
-function confirmsBrief(conversation, afterSeq, quote) {
+function confirmsBrief(conversation, after, quote) {
   const needle = squash(quote);
   if (!needle) return false;
+  const position = typeof after === "number" ? { seq: after } : after;
+  const later = (message) => "at" in position ? message.at !== void 0 && Date.parse(message.at) > Date.parse(position.at) : message.seq > position.seq;
   return conversation.some((message) => {
-    if (message.role !== "user" || message.seq <= afterSeq || message.text.trimStart().startsWith(PLUGIN_MESSAGE_PREFIX)) return false;
+    if (message.role !== "user" || !later(message) || [PLUGIN_MESSAGE_PREFIX, LEGACY_MESSAGE_PREFIX].some((prefix) => message.text.trimStart().startsWith(prefix))) return false;
     const text = squash(message.text);
     return text.includes(needle) && needle.length >= Math.min(text.length, Math.ceil(text.length * 0.4));
   });
@@ -20860,7 +20863,7 @@ function teamRules() {
     "You are the team's liaison and lead. You work out the requirement with the user, plan the work as tasks on a shared task board, approve and check the members' work, and integrate the result. Never pass the user's message on as it is.",
     "1. Intake: restate the request in your own words and ask what you need to know: scope, acceptance criteria, constraints, priorities, which roles should take part. Ask at most five questions at a time. During intake, do not start members and do not change files; reading the repository is fine.",
     `2. Brief and plan: write the brief (title, goal, requirements, acceptance criteria, constraints, out of scope) and break the work into tasks: a title, details saying what done means, the role that should do it (or none for anyone), the earlier tasks it waits for, and the files it will change. Set planApproval when the user wants to approve how members go about their tasks. Record it all with \`${T.brief}\`, show the brief and the tasks to the user, ask them to confirm or correct, and end your turn.`,
-    `3. Only after the user replies to confirm it, run \`${T.kickoff}\` with \`userConfirmation\` set to their confirming words, quoted exactly. The plugin checks that the user sent them after the brief was recorded (the user may also press Confirm in the Agent Team panel). After a correction, record it again with \`${T.brief}\`.`,
+    `3. Only after the user replies to confirm it, run \`${T.kickoff}\` with \`userConfirmation\` set to their confirming words, quoted exactly. The plugin checks that the user sent them after the brief was recorded (the user may also press Confirm in the Ensemble panel). After a correction, record it again with \`${T.brief}\`.`,
     "4. The run: the plugin posts the brief, puts the tasks on the board and starts a member for each role. Members claim ready tasks, mark them done with what they changed, and take the next one. The plugin hands open tasks to idle members and starts members for roles with work. Members message each other and you through the board. After the work the plugin runs a review round: members check each other's done tasks and send back what doesn't meet the brief.",
     `5. Lead the run: run \`${T.wait}\` (again while members work). Approve plans or send them back with feedback (\`${T.tasks}\`); answer questions (\`${T.broadcast}\` to several members, \`${T.send}\` to one); add, reassign, reopen with feedback, or drop tasks (\`${T.tasks}\`).`,
     `6. Integrate: when the run has finished, read the board (\`${T.board}\`), check every acceptance criterion against the done tasks, send back tasks that miss one and wait again. Then report to the user what was done, how it was checked and what is left.`,
@@ -20893,7 +20896,7 @@ function orchestratorPrompt(team, source) {
     "",
     "## Rules",
     `- Start and message members only with \`${TEAM_BIN}\`. Never start them yourself with \`orca agent launch\`, \`orca orchestration\`, sub-agents or other tools: \`${TEAM_BIN}\` gives each role its own agent, model and place on the team's dashboard.`,
-    `- If \`${TEAM_BIN}\` is not found or says the plugin is not running, tell the user that the Agent Team plugin is not available and stop. Do not work around it.`,
+    `- If \`${TEAM_BIN}\` is not found or says the plugin is not running, tell the user that the Ensemble plugin is not available and stop. Do not work around it.`,
     "- Keep members inside their folders. When a member is blocked (a permission prompt or an error), tell the user which role and why."
   ].filter((line, index, lines) => line !== "" || lines[index - 1] !== "").join("\n");
 }
@@ -21364,7 +21367,7 @@ function plannerPrompt(goal, file2, language) {
   const agents = KNOWN_AGENTS.join(" ");
   if (language === "zh") {
     return [
-      "[agent-team] \u8BF7\u4E3A\u8FD9\u4E2A\u9879\u76EE\u8BBE\u8BA1\u4E00\u4E2A\u667A\u80FD\u4F53\u56E2\u961F\uFF0C\u5E76\u628A\u5B83\u5199\u6210\u56E2\u961F\u6587\u4EF6\u3002\u56E2\u961F\u7531\u4E00\u4E2A\u534F\u8C03\u5668\u5E26\u9886\uFF0C\u6210\u5458\u5728\u534F\u8C03\u5668\u7684\u5DE5\u4F5C\u533A\u91CC\u5404\u81EA\u8FD0\u884C\u5728\u81EA\u5DF1\u7684 agent CLI \u548C\u6A21\u578B\u4E0A\u3002",
+      "[ensemble] \u8BF7\u4E3A\u8FD9\u4E2A\u9879\u76EE\u8BBE\u8BA1\u4E00\u4E2A\u667A\u80FD\u4F53\u56E2\u961F\uFF0C\u5E76\u628A\u5B83\u5199\u6210\u56E2\u961F\u6587\u4EF6\u3002\u56E2\u961F\u7531\u4E00\u4E2A\u534F\u8C03\u5668\u5E26\u9886\uFF0C\u6210\u5458\u5728\u534F\u8C03\u5668\u7684\u5DE5\u4F5C\u533A\u91CC\u5404\u81EA\u8FD0\u884C\u5728\u81EA\u5DF1\u7684 agent CLI \u548C\u6A21\u578B\u4E0A\u3002",
       given ? `\u76EE\u6807\uFF1A${given}` : "\u6CA1\u6709\u7ED9\u51FA\u76EE\u6807\uFF1A\u8BF7\u5148\u9605\u8BFB\u9879\u76EE\uFF08README\u3001\u76EE\u5F55\u7ED3\u6784\u3001\u4E3B\u8981\u6E90\u7801\uFF09\uFF0C\u5F04\u6E05\u5B83\u662F\u4EC0\u4E48\u3001\u9700\u8981\u54EA\u4E9B\u5DE5\u4F5C\uFF0C\u518D\u5199\u51FA\u76EE\u6807\u3002",
       "",
       "## \u6B65\u9AA4",
@@ -21384,7 +21387,7 @@ function plannerPrompt(goal, file2, language) {
     ].join("\n");
   }
   return [
-    "[agent-team] Design an agent team for this project and write it as a team file. A lead runs the team; each member runs in the lead's workspace on its own agent CLI and model.",
+    "[ensemble] Design an agent team for this project and write it as a team file. A lead runs the team; each member runs in the lead's workspace on its own agent CLI and model.",
     given ? `Goal: ${given}` : "No goal was given: first read the project (README, layout, main sources) to work out what it is and what work it needs, then write the goal yourself.",
     "",
     "## Steps",
@@ -21876,7 +21879,7 @@ function initCollaboration(adapter, runs, readTeam) {
 async function leadContext(caller) {
   await store.load();
   const lead = store.lead(caller.id);
-  if (!lead) throw new Error(`This terminal is not an agent team's lead. Start a team session from the Agent Team panel, or begin the first prompt of a new agent with "@team".`);
+  if (!lead) throw new Error(`This terminal is not an agent team's lead. Start a team session from the Ensemble panel, or begin the first prompt of a new agent with "@team".`);
   const { team, source } = await readTeamRef(lead);
   const override = lead.mode;
   const locked = lead.locked;
@@ -21967,7 +21970,7 @@ async function dispatch(ctx, leadId, spec, prompt, lang) {
   const systemPrompt = P.memberSystemPrompt(ctx.team, spec);
   const member = { leadTerminalId: leadId, role: spec.name, agent: spec.agent, model: spec.model, effort: spec.effort, title };
   await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, createdAt: now() });
-  const first = `[agent-team:${launchId}]
+  const first = `[ensemble:${launchId}]
 ${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
   const { terminalId } = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model: spec.model, effort: spec.effort, prompt: first });
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, createdAt: now() });
@@ -22079,7 +22082,7 @@ async function staff(runId) {
         return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${started.title}\uFF08${spec.name}\uFF09\u4E3A\u5B83\u7684\u5F85\u529E\u4EFB\u52A1\u52A0\u5165\u4E86\u8FD0\u884C\u3002` : `${started.title} (${spec.name}) joined the run for its open tasks.`, to: [], files: [] }, now()).run;
       });
     } catch (error62) {
-      console.error(`[agent-team] run ${runId}: could not staff ${role}`, error62);
+      console.error(`[ensemble] run ${runId}: could not staff ${role}`, error62);
     } finally {
       staffing.delete(lock);
     }
@@ -22090,7 +22093,7 @@ function advance(runId, depth = 0) {
 }
 async function moveAlong(runId, depth) {
   if (depth > 6) return;
-  await staff(runId).catch((error62) => console.error(`[agent-team] staffing ${runId} failed`, error62));
+  await staff(runId).catch((error62) => console.error(`[ensemble] staffing ${runId} failed`, error62));
   let action = null;
   await store.mutate(runId, (current) => {
     const step = nextStep(current);
@@ -22178,7 +22181,7 @@ async function moveAlong(runId, depth) {
     for (const member of taken.run.members.filter((entry) => entry.state === "working")) {
       const sent2 = await sendWhenIdle(member.agentId, promptsFor(taken.run.language).teamRoundPrompt(taken.run, member.readSeq)).catch(() => false);
       if (sent2) continue;
-      console.error(`[agent-team] run ${runId}: could not start round ${taken.run.round} for ${member.title}`);
+      console.error(`[ensemble] run ${runId}: could not start round ${taken.run.round} for ${member.title}`);
       await store.mutate(runId, (current) => finishMember(current, member.agentId, "failed", `(could not start round ${current.round}: the agent was not idle or is gone)`, now()));
     }
     await advance(runId, depth + 1);
@@ -22273,7 +22276,7 @@ async function finishPlanner(terminalId) {
       const workspaces = await orca().listWorkspaces().catch(() => []);
       const row = workspaces.find((entry) => entry.path === job.root);
       if (row) await orca().openFile(row.id, job.file).catch(() => void 0);
-      await orca().notify("Agent Team", `${job.file}`);
+      await orca().notify("Ensemble", `${job.file}`);
     }
     return;
   }
@@ -22937,7 +22940,7 @@ ${message}` : message)).catch(() => false);
         if (final2 || attention || plans || mail || stalled || Date.now() >= deadline || signal.aborted) break;
         if (Date.now() - lastCheck > 1e4) {
           lastCheck = Date.now();
-          await reconcile(run2.id).catch((error62) => console.error(`[agent-team] reconcile ${run2.id} failed`, error62));
+          await reconcile(run2.id).catch((error62) => console.error(`[ensemble] reconcile ${run2.id} failed`, error62));
           continue;
         }
         await sleep(2e3, signal);
@@ -23307,7 +23310,7 @@ ${parsed2.errors.map((error62) => `- ${error62}`).join("\n")}` };
   const lang = lead?.language ?? memberLead?.language ?? "en";
   const tools = lead ? TOOLSETS[lang].lead : member ? TOOLSETS[lang].member : [];
   if (!tools.length) {
-    return { isError: true, text: lang === "zh" ? "\u8FD9\u4E2A\u7EC8\u7AEF\u4E0D\u5C5E\u4E8E\u4EFB\u4F55\u667A\u80FD\u4F53\u56E2\u961F\u3002\u8BF7\u5728\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u542F\u52A8\u56E2\u961F\u4F1A\u8BDD\uFF0C\u6216\u5728\u65B0 agent \u7684\u7B2C\u4E00\u6761\u6D88\u606F\u5F00\u5934\u5199 @team\u3002" : "This terminal is not part of an agent team. Start a team session from the Agent Team panel, or begin a new agent's first prompt with @team." };
+    return { isError: true, text: lang === "zh" ? "\u8FD9\u4E2A\u7EC8\u7AEF\u4E0D\u5C5E\u4E8E\u4EFB\u4F55\u667A\u80FD\u4F53\u56E2\u961F\u3002\u8BF7\u5728\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u542F\u52A8\u56E2\u961F\u4F1A\u8BDD\uFF0C\u6216\u5728\u65B0 agent \u7684\u7B2C\u4E00\u6761\u6D88\u606F\u5F00\u5934\u5199 @team\u3002" : "This terminal is not part of an agent team. Start a team session from the Ensemble panel, or begin a new agent's first prompt with @team." };
   }
   noteAgentWorking(terminalId);
   const name2 = request.command.trim().toLowerCase();
@@ -23363,7 +23366,7 @@ async function teamFiles(root) {
 }
 async function ensureIgnored(root) {
   const ignore = join6(root, ".agents", ".gitignore");
-  if (!existsSync2(ignore)) await writeFile2(ignore, "# Agent Team plugin: run report links are local; team files are shared.\nruns/\n").catch(() => void 0);
+  if (!existsSync2(ignore)) await writeFile2(ignore, "# Ensemble plugin: run report links are local; team files are shared.\nruns/\n").catch(() => void 0);
 }
 async function saveTeamFile(root, team, file2) {
   const checked = checkTeam(team);
@@ -23518,8 +23521,8 @@ async function runReportFile(lead, runId) {
   const relative = `.agents/runs/${runId}.team-run.json`;
   await mkdir2(join7(lead.path, ".agents", "runs"), { recursive: true });
   const ignore = join7(lead.path, ".agents", ".gitignore");
-  if (!existsSync3(ignore)) await writeFile3(ignore, "# Agent Team plugin: run report links are local; team files are shared.\nruns/\n").catch(() => void 0);
-  await writeFile3(join7(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Agent Team run report. The run itself is kept by the plugin." }, null, 2) + "\n");
+  if (!existsSync3(ignore)) await writeFile3(ignore, "# Ensemble plugin: run report links are local; team files are shared.\nruns/\n").catch(() => void 0);
+  await writeFile3(join7(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Ensemble run report. The run itself is kept by the plugin." }, null, 2) + "\n");
   return relative;
 }
 var toLanguage = (value, fallback) => isPromptLanguage(value) ? value : fallback;
@@ -23614,7 +23617,7 @@ function createApi(deps) {
     const sourceLabel = source.kind === "file" ? source.file : source.kind === "preset" ? `the preset "${teamTitle(team)}"` : "the team chosen at start";
     const prompt = P.leadStartPrompt(team, sourceLabel, input2.request);
     const systemPrompt = P.orchestratorPrompt(team, sourceLabel);
-    const marked = `[agent-team:${launchId}]
+    const marked = `[ensemble:${launchId}]
 ${prompt}`;
     const base = { projectId: null, projectName: "", source, team, language, mode: override, locked: null, roles: [], brief: null };
     if (input2.newWorkspace && input2.projectPath) {
@@ -23678,7 +23681,7 @@ ${prompt}`;
     const lead = store2.lead(input2.terminalId);
     if (!lead?.brief) return { ok: false, notified: false };
     await store2.setPendingBrief(input2.terminalId, { ...lead.brief, confirmedBy: "panel" });
-    const text = lead.language === "zh" ? `${"[agent-team]"} \u7528\u6237\u5728\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u786E\u8BA4\u4E86\u9700\u6C42\u7B80\u62A5\u548C\u4EFB\u52A1\u8BA1\u5212\u3002\u73B0\u5728\u8FD0\u884C agent-team kickoff\uFF0CuserConfirmation \u586B "confirmed in panel"\u3002` : `[agent-team] The user confirmed the brief and task plan in the Agent Team panel. Run agent-team kickoff now, with userConfirmation "confirmed in panel".`;
+    const text = lead.language === "zh" ? `${PLUGIN_MESSAGE_PREFIX} \u7528\u6237\u5728\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u786E\u8BA4\u4E86\u9700\u6C42\u7B80\u62A5\u548C\u4EFB\u52A1\u8BA1\u5212\u3002\u73B0\u5728\u8FD0\u884C agent-team kickoff\uFF0CuserConfirmation \u586B "confirmed in panel"\u3002` : `${PLUGIN_MESSAGE_PREFIX} The user confirmed the brief and task plan in the Ensemble panel. Run agent-team kickoff now, with userConfirmation "confirmed in panel".`;
     const notified = await adapter.send(input2.terminalId, text);
     return { ok: true, notified };
   }
@@ -23721,7 +23724,7 @@ ${prompt}`;
       const launchId = newLaunchId();
       const prompt = plannerPrompt(goal, file2, lang);
       await store2.addLaunch({ id: launchId, kind: "planner", prompt, systemPrompt: "", planner: { root, file: file2, goal }, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
-      const { terminalId } = await adapter.launch({ path: root, agent: agent || "claude", model, prompt: `[agent-team:${launchId}]
+      const { terminalId } = await adapter.launch({ path: root, agent: agent || "claude", model, prompt: `[ensemble:${launchId}]
 ${prompt}`, focus: false });
       if (!store2.planner(terminalId)) await store2.setPlanner({ terminalId, root, file: file2, goal, status: "planning", errors: [], startedAt: (/* @__PURE__ */ new Date()).toISOString(), endedAt: null });
       return { terminalId, file: file2 };
@@ -23821,7 +23824,7 @@ function shellWords(command) {
 function shellQuote(word) {
   return `'${word.replace(/'/g, `'\\''`)}'`;
 }
-var LAUNCH_MARKER = /^\[agent-team:(L[0-9A-F]{8})\]\n?/;
+var LAUNCH_MARKER = /^\[ensemble:(L[0-9A-F]{8})\]\n?/;
 var TEAM_DIRECTIVE = /^@team(?:[ \t]+([^\n]*))?(?:\n|$)/i;
 function parseDirective(prompt) {
   const match = prompt.match(TEAM_DIRECTIVE);
@@ -23986,7 +23989,7 @@ async function activate(orca2) {
     const briefs = store2.leads().filter((lead) => lead.brief && !lead.endedAt).length;
     const zh = locale.toLowerCase().startsWith("zh");
     const text = active.length ? zh ? `\u56E2\u961F ${active.length} \xB7 ${working} \u5DE5\u4F5C\u4E2D${briefs ? ` \xB7 ${briefs} \u5F85\u786E\u8BA4` : ""}` : `Teams ${active.length} \xB7 ${working} working${briefs ? ` \xB7 ${briefs} to confirm` : ""}` : briefs ? zh ? `\u56E2\u961F \xB7 ${briefs} \u5F85\u786E\u8BA4` : `Teams \xB7 ${briefs} to confirm` : zh ? "\u56E2\u961F" : "Teams";
-    await orca2.host.call("statusBar.update", { id: "teams", text, icon: "bot", tone: attention ? "warning" : briefs ? "accent" : working ? "success" : "neutral", tooltip: zh ? "\u667A\u80FD\u4F53\u56E2\u961F\uFF1A\u6253\u5F00\u9762\u677F" : "Agent Team: open the panel", visible: true }).catch(() => void 0);
+    await orca2.host.call("statusBar.update", { id: "teams", text, icon: "bot", tone: attention ? "warning" : briefs ? "accent" : working ? "success" : "neutral", tooltip: zh ? "\u667A\u80FD\u4F53\u56E2\u961F\uFF1A\u6253\u5F00\u9762\u677F" : "Ensemble: open the panel", visible: true }).catch(() => void 0);
   }
   void updateStatusBar();
   orca2.events.on("agent.status.changed", (payload) => {
@@ -24028,15 +24031,15 @@ async function activate(orca2) {
     }).catch(() => null);
     return next(changedPrompt ?? event);
   });
-  orca2.commands.register("agentTeam.openLatestReport", async () => {
+  orca2.commands.register("ensemble.openLatestReport", async () => {
     const run = store2.allRuns().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (!run) return locale.startsWith("zh") ? "\u8FD8\u6CA1\u6709\u56E2\u961F\u8FD0\u884C\u3002" : "No team run yet.";
     const result = await api.openReport({ runId: run.id });
     return result.ok ? void 0 : result.error;
   });
-  orca2.commands.register("agentTeam.startHere", async () => {
+  orca2.commands.register("ensemble.startHere", async () => {
     await orca2.host.call("commands.run", { action: "sidebar.right.toggle" }).catch(() => void 0);
-    return locale.startsWith("zh") ? "\u5728\u53F3\u4FA7\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u9009\u62E9\u56E2\u961F\u5E76\u5F00\u59CB\u3002\u4E5F\u53EF\u4EE5\u5728\u65B0 agent \u7684\u7B2C\u4E00\u6761\u6D88\u606F\u5F00\u5934\u5199 @team\u3002" : "Pick a team in the Agent Team panel on the right and start. You can also begin a new agent's first prompt with @team.";
+    return locale.startsWith("zh") ? "\u5728\u53F3\u4FA7\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u9009\u62E9\u56E2\u961F\u5E76\u5F00\u59CB\u3002\u4E5F\u53EF\u4EE5\u5728\u65B0 agent \u7684\u7B2C\u4E00\u6761\u6D88\u606F\u5F00\u5934\u5199 @team\u3002" : "Pick a team in the Ensemble panel on the right and start. You can also begin a new agent's first prompt with @team.";
   });
   const server = serveShim(socketPath(pluginRoot), (request) => {
     if (request.terminalId) noteAgentWorking(request.terminalId);

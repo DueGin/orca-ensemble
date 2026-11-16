@@ -78,7 +78,7 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
     const text = active.length
       ? zh ? `团队 ${active.length} · ${working} 工作中${briefs ? ` · ${briefs} 待确认` : ""}` : `Teams ${active.length} · ${working} working${briefs ? ` · ${briefs} to confirm` : ""}`
       : briefs ? (zh ? `团队 · ${briefs} 待确认` : `Teams · ${briefs} to confirm`) : zh ? "团队" : "Teams";
-    await orca.host.call("statusBar.update", { id: "teams", text, icon: "bot", tone: attention ? "warning" : briefs ? "accent" : working ? "success" : "neutral", tooltip: zh ? "智能体团队：打开面板" : "Agent Team: open the panel", visible: true }).catch(() => undefined);
+    await orca.host.call("statusBar.update", { id: "teams", text, icon: "bot", tone: attention ? "warning" : briefs ? "accent" : working ? "success" : "neutral", tooltip: zh ? "智能体团队：打开面板" : "Ensemble: open the panel", visible: true }).catch(() => undefined);
   }
   void updateStatusBar();
 
@@ -126,15 +126,15 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
   });
 
   // ----- Commands
-  orca.commands.register("agentTeam.openLatestReport", async () => {
+  orca.commands.register("ensemble.openLatestReport", async () => {
     const run = store.allRuns().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (!run) return locale.startsWith("zh") ? "还没有团队运行。" : "No team run yet.";
     const result = await api.openReport({ runId: run.id });
     return result.ok ? undefined : result.error;
   });
-  orca.commands.register("agentTeam.startHere", async () => {
+  orca.commands.register("ensemble.startHere", async () => {
     await orca.host.call("commands.run", { action: "sidebar.right.toggle" }).catch(() => undefined);
-    return locale.startsWith("zh") ? "在右侧「智能体团队」面板里选择团队并开始。也可以在新 agent 的第一条消息开头写 @team。" : "Pick a team in the Agent Team panel on the right and start. You can also begin a new agent's first prompt with @team.";
+    return locale.startsWith("zh") ? "在右侧「智能体团队」面板里选择团队并开始。也可以在新 agent 的第一条消息开头写 @team。" : "Pick a team in the Ensemble panel on the right and start. You can also begin a new agent's first prompt with @team.";
   });
 
   // ----- The agents' `agent-team` command

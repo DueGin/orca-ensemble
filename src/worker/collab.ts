@@ -86,7 +86,7 @@ interface LeadContext {
 async function leadContext(caller: { id: string; workspaceId?: string | null }): Promise<LeadContext> {
   await store.load();
   const lead = store.lead(caller.id);
-  if (!lead) throw new Error(`This terminal is not an agent team's lead. Start a team session from the Agent Team panel, or begin the first prompt of a new agent with "@team".`);
+  if (!lead) throw new Error(`This terminal is not an agent team's lead. Start a team session from the Ensemble panel, or begin the first prompt of a new agent with "@team".`);
   const { team, source } = await readTeamRef(lead);
   const override = lead.mode;
   const locked = lead.locked;
@@ -217,7 +217,7 @@ async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prom
   await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, createdAt: now() });
   // The marker lets the launch hook tie this launch to its terminal; agents without a system prompt get the
   // standing instructions in their first message.
-  const first = `[agent-team:${launchId}]\n${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
+  const first = `[ensemble:${launchId}]\n${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
   const { terminalId } = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model: spec.model, effort: spec.effort, prompt: first });
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, createdAt: now() });
   void orca().runCli(["terminal", "rename", "--terminal", terminalId, "--title", title]).catch(() => undefined);
@@ -354,7 +354,7 @@ async function staff(runId: string): Promise<void> {
         return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${started.title}（${spec.name}）为它的待办任务加入了运行。` : `${started.title} (${spec.name}) joined the run for its open tasks.`, to: [], files: [] }, now()).run;
       });
     } catch (error) {
-      console.error(`[agent-team] run ${runId}: could not staff ${role}`, error);
+      console.error(`[ensemble] run ${runId}: could not staff ${role}`, error);
     } finally {
       staffing.delete(lock);
     }
@@ -379,7 +379,7 @@ function advance(runId: string, depth = 0): Promise<void> {
 
 async function moveAlong(runId: string, depth: number): Promise<void> {
   if (depth > 6) return;
-  await staff(runId).catch((error) => console.error(`[agent-team] staffing ${runId} failed`, error));
+  await staff(runId).catch((error) => console.error(`[ensemble] staffing ${runId} failed`, error));
   let action: Action | null = null;
   await store.mutate(runId, (current) => {
     const step = nextStep(current);
@@ -472,7 +472,7 @@ async function moveAlong(runId: string, depth: number): Promise<void> {
     for (const member of taken.run.members.filter((entry) => entry.state === "working")) {
       const sent = await sendWhenIdle(member.agentId, promptsFor(taken.run.language).teamRoundPrompt(taken.run, member.readSeq)).catch(() => false);
       if (sent) continue;
-      console.error(`[agent-team] run ${runId}: could not start round ${taken.run.round} for ${member.title}`);
+      console.error(`[ensemble] run ${runId}: could not start round ${taken.run.round} for ${member.title}`);
       await store.mutate(runId, (current) => finishMember(current, member.agentId, "failed", `(could not start round ${current.round}: the agent was not idle or is gone)`, now()));
     }
     await advance(runId, depth + 1);
@@ -583,7 +583,7 @@ async function finishPlanner(terminalId: string): Promise<void> {
       const workspaces = await orca().listWorkspaces().catch(() => []);
       const row = workspaces.find((entry) => entry.path === job.root);
       if (row) await orca().openFile(row.id, job.file).catch(() => undefined);
-      await orca().notify("Agent Team", `${job.file}`);
+      await orca().notify("Ensemble", `${job.file}`);
     }
     return;
   }
@@ -1307,7 +1307,7 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
         if (final || attention || plans || mail || stalled || Date.now() >= deadline || signal.aborted) break;
         if (Date.now() - lastCheck > 10_000) {
           lastCheck = Date.now();
-          await reconcile(run.id).catch((error) => console.error(`[agent-team] reconcile ${run.id} failed`, error));
+          await reconcile(run.id).catch((error) => console.error(`[ensemble] reconcile ${run.id} failed`, error));
           continue;
         }
         await sleep(2000, signal);
@@ -1684,7 +1684,7 @@ export async function handleShim(request: ShimRequest): Promise<ShimResponse> {
   const lang: PromptLanguage = lead?.language ?? memberLead?.language ?? "en";
   const tools = lead ? TOOLSETS[lang].lead : member ? TOOLSETS[lang].member : [];
   if (!tools.length) {
-    return { isError: true, text: lang === "zh" ? "这个终端不属于任何智能体团队。请在「智能体团队」面板里启动团队会话，或在新 agent 的第一条消息开头写 @team。" : "This terminal is not part of an agent team. Start a team session from the Agent Team panel, or begin a new agent's first prompt with @team." };
+    return { isError: true, text: lang === "zh" ? "这个终端不属于任何智能体团队。请在「智能体团队」面板里启动团队会话，或在新 agent 的第一条消息开头写 @team。" : "This terminal is not part of an agent team. Start a team session from the Ensemble panel, or begin a new agent's first prompt with @team." };
   }
   noteAgentWorking(terminalId);
   const name = request.command.trim().toLowerCase();

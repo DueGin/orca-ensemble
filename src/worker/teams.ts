@@ -29,7 +29,7 @@ export async function teamFiles(root: string): Promise<TeamFile[]> {
 
 async function ensureIgnored(root: string): Promise<void> {
   const ignore = join(root, ".agents", ".gitignore");
-  if (!existsSync(ignore)) await writeFile(ignore, "# Agent Team plugin: run report links are local; team files are shared.\nruns/\n").catch(() => undefined);
+  if (!existsSync(ignore)) await writeFile(ignore, "# Ensemble plugin: run report links are local; team files are shared.\nruns/\n").catch(() => undefined);
 }
 
 /** Writes a team into a checkout; a new file gets a name from the team's title. Returns the relative path. */

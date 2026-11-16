@@ -11,7 +11,7 @@ function rootKey(pluginRoot2) {
   return (0, import_node_crypto.createHash)("sha256").update(pluginRoot2).digest("hex").slice(0, 12);
 }
 function socketPath(pluginRoot2) {
-  return `/tmp/orca-agent-team-${rootKey(pluginRoot2)}.sock`;
+  return `/tmp/orca-ensemble-${rootKey(pluginRoot2)}.sock`;
 }
 
 // src/cli/agent-team.ts
@@ -87,7 +87,7 @@ async function main() {
 `);
       return 3;
     }
-    process.stderr.write("agent-team: the Agent Team plugin is not running in Orca (enable it in Settings \u2192 Plugins), so the team can't be reached.\n");
+    process.stderr.write("agent-team: the Ensemble plugin is not running in Orca (enable it in Settings \u2192 Plugins), so the team can't be reached.\n");
     return 2;
   }
 }

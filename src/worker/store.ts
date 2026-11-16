@@ -1,4 +1,4 @@
-// The plugin's state on disk, under ~/.orca-agent-team/<plugin>: one file per run, and an index of lead sessions,
+// The plugin's state on disk, under ~/.orca-ensemble/<plugin>: one file per run, and an index of lead sessions,
 // members and launches in flight. Changes to a run go one at a time and are traced into its data flow.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";

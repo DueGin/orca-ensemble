@@ -1,4 +1,4 @@
-// Builds dev/fixtures.js for the static run-report harness: the real runs in ~/.orca-agent-team/*/runs, converted to
+// Builds dev/fixtures.js for the static run-report harness: the real runs in ~/.orca-ensemble/*/runs, converted to
 // RunDetail like the worker's detailView does, plus a team run and a delegation run played through the shared state
 // functions (so their data flow is traced exactly like a live run's).
 // Run: node dev/make-fixtures.mjs  (bundled from this file by dev/build-harness.mjs)
@@ -214,7 +214,7 @@ fixtures[team.run.id] = detailOf(team.run, (id) => team.extra[id] ?? { agent: nu
 const delegation = delegationRun();
 fixtures[delegation.run.id] = detailOf(delegation.run, (id) => delegation.extra[id] ?? { agent: null, model: null, live: null });
 
-const root = join(homedir(), ".orca-agent-team");
+const root = join(homedir(), ".orca-ensemble");
 for (const store of existsSync(root) ? readdirSync(root) : []) {
   const dir = join(root, store, "runs");
   if (!existsSync(dir)) continue;

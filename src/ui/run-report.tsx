@@ -24,7 +24,7 @@ function runIdOf(text: string): string | null {
 }
 
 function focusAgent(terminalId: string) {
-  call("focus", { terminalId }).catch((error) => console.warn("[agent-team] focus failed", error));
+  call("focus", { terminalId }).catch((error) => console.warn("[ensemble] focus failed", error));
 }
 
 function App() {

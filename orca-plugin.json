@@ -2,8 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
   "manifestVersion": 2,
   "execution": "trusted-worker",
-  "id": "agent-team",
-  "name": "Agent Team",
+  "id": "ensemble",
+  "name": "Ensemble",
   "version": "0.1.0",
   "description": "Run a request with a team of agents: a lead that does intake, a shared task board, plan approval, messages and file claims (team mode), or splits the work across isolated members (delegation mode). Each role runs on its own agent CLI and model. Live data-flow dashboard, visual team editor, presets, and @team in any new agent.",
   "author": { "name": "DueGin" },
@@ -13,18 +13,18 @@
   "main": "dist/worker.mjs",
   "contributes": {
     "panels": [
-      { "id": "dashboard", "title": "Agent Team", "icon": "bot", "entry": "dist/panel.html" }
+      { "id": "dashboard", "title": "Ensemble", "icon": "bot", "entry": "dist/panel.html" }
     ],
     "customEditors": [
       { "id": "team", "title": "Team", "extensions": [".team.json"], "entry": "dist/team-editor.html", "priority": "default" },
       { "id": "run", "title": "Run report", "extensions": [".team-run.json"], "entry": "dist/run-report.html", "priority": "default" }
     ],
     "commands": [
-      { "id": "agentTeam.openLatestReport", "title": "Agent Team: Open the latest run report" },
-      { "id": "agentTeam.startHere", "title": "Agent Team: Start a team session" }
+      { "id": "ensemble.openLatestReport", "title": "Ensemble: Open the latest run report" },
+      { "id": "ensemble.startHere", "title": "Ensemble: Start a team session" }
     ],
     "statusBarItems": [
-      { "id": "teams", "text": "Teams", "icon": "bot", "tooltip": "Agent Team", "command": "agentTeam.openLatestReport" }
+      { "id": "teams", "text": "Teams", "icon": "bot", "tooltip": "Ensemble", "command": "ensemble.openLatestReport" }
     ],
     "events": [
       { "on": "agent.status.changed" },

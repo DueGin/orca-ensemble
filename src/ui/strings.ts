@@ -505,7 +505,7 @@ export const STRINGS = {
    "total": "Total"
   },
   "app": {
-   "title": "Agent Team",
+   "title": "Ensemble",
    "tabs": {
     "session": "Session",
     "start": "Start",

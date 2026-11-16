@@ -11,12 +11,12 @@ export function rootKey(pluginRoot: string): string {
 
 /** The Unix socket the worker serves `agent-team` on; short, since socket paths are capped near 104 bytes. */
 export function socketPath(pluginRoot: string): string {
-  return `/tmp/orca-agent-team-${rootKey(pluginRoot)}.sock`;
+  return `/tmp/orca-ensemble-${rootKey(pluginRoot)}.sock`;
 }
 
 /** The plugin's state: sessions, runs, the agents' instruction files. */
 export function dataDir(pluginRoot: string): string {
-  return join(homedir(), ".orca-agent-team", rootKey(pluginRoot));
+  return join(homedir(), ".orca-ensemble", rootKey(pluginRoot));
 }
 
 /** Environment the plugin gives every agent Orca launches, so `agent-team` works in its shell. */

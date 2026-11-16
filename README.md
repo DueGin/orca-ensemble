@@ -1,4 +1,4 @@
-# Agent Team for Orca · Orca 智能体团队插件
+# Ensemble for Orca · Orca 智能体团队插件
 
 **[English](#english)** · **[中文](#中文)**
 
@@ -8,7 +8,7 @@
 
 ## English
 
-Run a request with a team of coding agents in [Orca](https://github.com/stablyai/orca). A **lead** agent talks to you; **members** run in their own Orca terminals, each on its own agent CLI and model (Claude, Codex, Gemini, OpenCode, …). The lead works in one of two collaboration modes, or picks one per request:
+**Ensemble** runs a request with a team of coding agents in [Orca](https://github.com/stablyai/orca). A **lead** agent talks to you; **members** run in their own Orca terminals, each on its own agent CLI and model (Claude, Codex, Gemini, OpenCode, …). The lead works in one of two collaboration modes, or picks one per request:
 
 | Mode | Pattern | How it goes |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
 
 ![Delegation run report: three isolated sub-agents, the data flow into task split, sub-agent contexts, reports and summary](docs/images/run-report-delegation.png)
 
-**Agent Team panel** in the right sidebar: the brief waiting for your confirmation, the data flow, and a page per component (task board, team board with read progress):
+**Ensemble panel** in the right sidebar: the brief waiting for your confirmation, the data flow, and a page per component (task board, team board with read progress):
 
 ![Sidebar views: brief waiting for confirmation with data-flow cards, the task board page, and the team board timeline with inbox progress](docs/images/sidebar.png)
 
@@ -41,7 +41,7 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
 
 ### What you get in Orca
 
-- **Agent Team panel** (right sidebar, robot icon): the focused workspace's team session, its mode (switch it, or see it locked), the brief waiting for your **Confirm**, the members with their live state (click to show a member's terminal), and the run's data-flow diagram with a page per component.
+- **Ensemble panel** (right sidebar, robot icon): the focused workspace's team session, its mode (switch it, or see it locked), the brief waiting for your **Confirm**, the members with their live state (click to show a member's terminal), and the run's data-flow diagram with a page per component.
   - **Start**: pick a team file of the project or a preset, write the request, choose this workspace or a **new worktree**, the mode and the language; or make an agent already running here the lead.
   - **Teams**: the project's team files (open one in the team editor), create a team, **plan a team with AI** (an agent reads the project, checks which agent CLIs you have and writes the team file), and the presets.
 - **Team editor**: `.agents/teams/*.team.json` files open in a visual editor (Orca's Source view still shows the JSON): mode cards, language, the lead's agent/model/effort, fixed roles (folders, instructions) and the candidate pool (described by what each is good at and must not do), inline validation, undo/redo, **Save as preset**, **Start a session**.
@@ -53,7 +53,7 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
   Add a dark mode toggle to the settings page
   ```
 
-  and it becomes the lead of the team `web` (a team file or preset name; optional when the project has one team), in the given mode (optional). Turn it off in Settings → Plugins → Agent Team.
+  and it becomes the lead of the team `web` (a team file or preset name; optional when the project has one team), in the given mode (optional). Turn it off in Settings → Plugins → Ensemble.
 - **Status bar**: active runs, working members and briefs waiting for you; click to open the latest run report.
 - **Chinese or English**: set per team (or follow Orca's language): the plugin's instructions to the agents, their replies, briefs and board posts, and the plugin's own UI.
 
@@ -65,7 +65,7 @@ Orca plugins can't give agents new tools, so the plugin puts a command, `agent-t
 - Messages to idle agents are typed with `orca terminal send`, never into an agent mid-turn. Messages to a busy agent arrive in the output of its next `agent-team` command.
 - Turn ends come from Orca's agent status and, for Claude, its session transcript (`stop_reason: end_turn`), so an agent's idle status while it starts up is not taken for a finished turn.
 - Team mode's intake can't be skipped: `agent-team kickoff` needs your own words confirming the brief, found in the lead's transcript or on its screen after the brief was recorded, or your **Confirm** in the panel.
-- State lives in `~/.orca-agent-team/<plugin>/` (sessions and runs). Team files live in the project, `.agents/teams/*.team.json`, shared through git. A run report opens on a small link file in `.agents/runs/`, which the plugin keeps out of git.
+- State lives in `~/.orca-ensemble/<plugin>/` (sessions and runs). Team files live in the project, `.agents/teams/*.team.json`, shared through git. A run report opens on a small link file in `.agents/runs/`, which the plugin keeps out of git.
 
 ### Requirements
 
@@ -77,7 +77,7 @@ Orca plugins can't give agents new tools, so the plugin puts a command, `agent-t
 ### Install
 
 ```sh
-orca plugin install https://github.com/DueGin/orca-agent-team
+orca plugin install https://github.com/DueGin/orca-ensemble
 ```
 
 or Orca → Settings → Plugins → install from the Git URL above. Review and enable it: it asks for workspace, agent, terminal, notification and storage access. `dist/` is committed, so a Git install needs no build.
@@ -121,13 +121,13 @@ npm run watch                    # rebuild dist/ on change; Orca reloads a devel
 
 Layout: `src/worker/` (the plugin worker: hooks, the `agent-team` server, runs, the panel API), `src/cli/agent-team.ts` (the command), `src/shared/` (run model, task board, data flow, prompts in English and Chinese), `src/ui/` (panel, team editor and run report frames, React), `dev/` (static harnesses for the UI with a fake `window.orca`).
 
-This is a port of [paseo-agent-team](https://github.com/DueGin/paseo-agent-team), the same plugin for Paseo.
+This is a port of [paseo-ensemble](https://github.com/DueGin/paseo-ensemble), the same plugin for Paseo (formerly `paseo-agent-team`).
 
 ---
 
 ## 中文
 
-在 [Orca](https://github.com/stablyai/orca) 里用一个智能体团队完成需求。你只和**协调器**对话；**成员**各自运行在自己的 Orca 终端里，每个角色用自己的 agent CLI 和模型（Claude、Codex、Gemini、OpenCode……）。协调器按下面的协作模式工作，也可以按需求自动选择：
+**Ensemble** 在 [Orca](https://github.com/stablyai/orca) 里用一个智能体团队完成需求。你只和**协调器**对话；**成员**各自运行在自己的 Orca 终端里，每个角色用自己的 agent CLI 和模型（Claude、Codex、Gemini、OpenCode……）。协调器按下面的协作模式工作，也可以按需求自动选择：
 
 | 模式 | 模式编号 | 过程 |
 | --- | --- | --- |
@@ -169,7 +169,7 @@ This is a port of [paseo-agent-team](https://github.com/DueGin/paseo-agent-team)
   给设置页加一个深色模式开关
   ```
 
-  它就会成为团队 `web`（团队文件或预设的名字；项目里只有一个团队时可省略）的协调器，模式可选。可在 设置 → 插件 → Agent Team 里关闭。
+  它就会成为团队 `web`（团队文件或预设的名字；项目里只有一个团队时可省略）的协调器，模式可选。可在 设置 → 插件 → Ensemble 里关闭。
 - **状态栏**：进行中的运行、工作中的成员、等你确认的简报；点击打开最新的运行报告。
 - **中文或英文**：按团队设置（或跟随 Orca 的界面语言），影响插件给智能体的指令、它们的回复、简报和黑板帖子，以及插件自己的界面。
 
@@ -181,7 +181,7 @@ Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 
 - 给空闲 agent 的消息用 `orca terminal send` 输入，绝不打断进行中的回合；给忙碌 agent 的消息会附在它下一次 `agent-team` 命令的输出里。
 - 回合结束依据 Orca 的 agent 状态，Claude 还会读取它的会话记录（`stop_reason: end_turn`），不会把启动时的空闲状态误当成完成。
 - 团队模式的需求对接不能跳过：`agent-team kickoff` 需要你在简报之后亲口确认的原话（从协调器的会话记录或屏幕里核对），或你在面板里按**确认**。
-- 状态保存在 `~/.orca-agent-team/<plugin>/`。团队文件保存在项目里的 `.agents/teams/*.team.json`，通过 git 共享。运行报告打开的是 `.agents/runs/` 下的小链接文件，插件会把它排除在 git 之外。
+- 状态保存在 `~/.orca-ensemble/<plugin>/`。团队文件保存在项目里的 `.agents/teams/*.team.json`，通过 git 共享。运行报告打开的是 `.agents/runs/` 下的小链接文件，插件会把它排除在 git 之外。
 
 ### 要求
 
@@ -193,7 +193,7 @@ Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 
 ### 安装
 
 ```sh
-orca plugin install https://github.com/DueGin/orca-agent-team
+orca plugin install https://github.com/DueGin/orca-ensemble
 ```
 
 或在 Orca → 设置 → 插件 里用上面的 Git 地址安装，查看并启用（它会请求工作区、agent、终端、通知和存储权限）。`dist/` 已提交到仓库，从 Git 安装无需构建。
@@ -217,7 +217,7 @@ npm run typecheck && npm test   # 单元测试，包括用模拟的 Orca 把两�
 npm run watch                    # 改动后重新构建 dist/；Orca 会重载开发中的插件
 ```
 
-这是 [paseo-agent-team](https://github.com/DueGin/paseo-agent-team)（Paseo 版）的 Orca 移植。
+这是 [paseo-ensemble](https://github.com/DueGin/paseo-ensemble)（Paseo 版，原名 `paseo-agent-team`）的 Orca 移植。
 
 ## License
 
