@@ -39,7 +39,9 @@ function sectionOf(field: string): SectionId {
 
 /** The mode hint without its "Team (MA-08):" lead-in, which the card already shows. */
 const modeHint = (mode: TeamMode) => {
-  const hint = t(`mode.${mode}Hint`).replace(/^[^:：]{1,32}[:：]\s*/, "");
+  // The hint without its "Team (MA-08):" lead-in, which the card already shows; sentence case again.
+  const trimmed = t(`mode.${mode}Hint`).replace(/^[^:：]{1,32}[:：]\s*/, "");
+  const hint = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   return hint.charAt(0).toUpperCase() + hint.slice(1);
 };
 const modePattern = (mode: TeamMode) => (mode === "auto" ? `${MODE_SPECS.team.pattern} · ${MODE_SPECS.delegation.pattern}` : mode === "none" ? "" : MODE_SPECS[mode].pattern);
