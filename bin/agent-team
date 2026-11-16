@@ -1,0 +1,11 @@
+#!/bin/sh
+# The Agent Team plugin's command for agents in Orca terminals. See `agent-team help`.
+here=$(cd "$(dirname "$0")" && pwd -P)
+if command -v node >/dev/null 2>&1; then
+  exec node "$here/../dist/agent-team.cjs" "$@"
+elif [ -n "$AGENT_TEAM_NODE" ] && [ -x "$AGENT_TEAM_NODE" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$AGENT_TEAM_NODE" "$here/../dist/agent-team.cjs" "$@"
+else
+  echo "agent-team: no Node.js found to run the command." >&2
+  exit 2
+fi

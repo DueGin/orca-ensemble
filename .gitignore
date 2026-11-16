@@ -1,0 +1,9 @@
+node_modules/
+.orca/
+dev/shots/
+*.tmp
+.DS_Store
+# Generated harness pages and local run fixtures (dev/build-harness.mjs, dev/make-team-harness.mjs)
+dev/fixtures.js
+dev/sidebar.js
+dev/*-harness.html

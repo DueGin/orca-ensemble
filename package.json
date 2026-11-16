@@ -1,0 +1,25 @@
+{
+  "name": "orca-agent-team",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent teams for Orca: a lead agent that runs a request as a team (intake, shared task board, mailbox, plan approval, file claims) or by delegation, with members on their own agents and models, a live data-flow dashboard and a visual team editor.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.25.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "zod": "^4.4.3"
+  }
+}
