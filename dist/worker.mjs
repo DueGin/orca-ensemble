@@ -12,6 +12,11 @@ import { unlinkSync } from "node:fs";
 import { dirname as dirname2, join as join9 } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// src/shared/json.ts
+function toJson(value) {
+  return value === void 0 ? value : JSON.parse(JSON.stringify(value));
+}
+
 // src/shared/modes.ts
 var COLLAB_MODES = ["team", "delegation"];
 var TEAM_MODES = ["auto", ...COLLAB_MODES, "none"];
@@ -20804,7 +20809,7 @@ function teamTable(team) {
 function candidateList(team) {
   return team.candidates.flatMap((candidate) => [
     `- ${candidate.name} (${runtimeLabel(candidate)})`,
-    ...candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  (no description)"]
+    ...candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  (no description: a general member; give it work its model suits)"]
   ]);
 }
 var MODE_LINE = {
@@ -20838,8 +20843,8 @@ function modeRules() {
 function formingRules() {
   return [
     "## Assigning work to candidates",
-    "- A candidate is a model, not a job: nothing about it is fixed except what its description says. Give each piece of work to the candidate whose description says it is good at or suited for that kind of work, and weigh cost and speed when the description gives them.",
-    "- Treat what a description says a candidate must not do as a hard rule: never give it that work, also not as part of a larger task. When no description fits a piece of work, do it yourself or tell the user.",
+    "- A candidate is a model, not a job: nothing about it is fixed except what its description says. Give each piece of work to the candidate whose description says it is good at or suited for that kind of work, and weigh cost and speed when the description gives them. A candidate without a description is a general member: give it work its model is suited for.",
+    "- Treat what a description says a candidate must not do as a hard rule: never give it that work, also not as part of a larger task. When no candidate fits a piece of work, do it yourself or tell the user.",
     `- You can give work straight to a candidate by its name, as the role in \`${T.delegate}\` or in a team task.`,
     `- When the same model should take on a narrower job (its own instructions or folders, or two jobs on one model), form a role with \`${T.role}\`: a short lowercase name, the candidate, instructions and folders. A role can only run on a candidate's agent and model.`,
     "- Fixed roles stay available next to the candidates. When you split work, say in one line which candidate gets what and why, citing its description."
@@ -21086,7 +21091,7 @@ function teamTable2(team) {
 function candidateList2(team) {
   return team.candidates.flatMap((candidate) => [
     `- ${candidate.name} (${runtimeLabel(candidate)})`,
-    ...candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  \uFF08\u65E0\u63CF\u8FF0\uFF09"]
+    ...candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  \uFF08\u65E0\u63CF\u8FF0\uFF1A\u901A\u7528\u6210\u5458\uFF0C\u6309\u5B83\u6240\u7528\u6A21\u578B\u7684\u80FD\u529B\u5206\u914D\u5DE5\u4F5C\uFF09"]
   ]);
 }
 var MODE_LINE2 = {
@@ -21122,8 +21127,8 @@ function modeRules2() {
 function formingRules2() {
   return [
     "## \u7ED9\u5019\u9009\u6210\u5458\u5206\u914D\u5DE5\u4F5C",
-    "- \u5019\u9009\u6210\u5458\u662F\u4E00\u4E2A\u6A21\u578B\uFF0C\u4E0D\u662F\u4E00\u4E2A\u5C97\u4F4D\uFF1A\u9664\u4E86\u63CF\u8FF0\u91CC\u5199\u7684\u5185\u5BB9\uFF0C\u5B83\u6CA1\u6709\u4EFB\u4F55\u56FA\u5B9A\u8BBE\u5B9A\u3002\u628A\u6BCF\u9879\u5DE5\u4F5C\u4EA4\u7ED9\u63CF\u8FF0\u4E2D\u8868\u660E\u64C5\u957F\u6216\u9002\u5408\u8FD9\u7C7B\u5DE5\u4F5C\u7684\u5019\u9009\u6210\u5458\uFF1B\u63CF\u8FF0\u91CC\u7ED9\u51FA\u6210\u672C\u548C\u901F\u5EA6\u65F6\uFF0C\u4E5F\u8981\u4E00\u5E76\u6743\u8861\u3002",
-    "- \u63CF\u8FF0\u4E2D\u8BF4\u67D0\u4E2A\u5019\u9009\u6210\u5458\u4E0D\u80FD\u505A\u7684\u4E8B\u662F\u786C\u6027\u89C4\u5219\uFF1A\u7EDD\u4E0D\u628A\u8FD9\u7C7B\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF0C\u4F5C\u4E3A\u66F4\u5927\u4EFB\u52A1\u7684\u4E00\u90E8\u5206\u4E5F\u4E0D\u884C\u3002\u6CA1\u6709\u4EFB\u4F55\u63CF\u8FF0\u9002\u5408\u67D0\u9879\u5DE5\u4F5C\u65F6\uFF0C\u4F60\u81EA\u5DF1\u505A\uFF0C\u6216\u8005\u544A\u8BC9\u7528\u6237\u3002",
+    "- \u5019\u9009\u6210\u5458\u662F\u4E00\u4E2A\u6A21\u578B\uFF0C\u4E0D\u662F\u4E00\u4E2A\u5C97\u4F4D\uFF1A\u9664\u4E86\u63CF\u8FF0\u91CC\u5199\u7684\u5185\u5BB9\uFF0C\u5B83\u6CA1\u6709\u4EFB\u4F55\u56FA\u5B9A\u8BBE\u5B9A\u3002\u628A\u6BCF\u9879\u5DE5\u4F5C\u4EA4\u7ED9\u63CF\u8FF0\u4E2D\u8868\u660E\u64C5\u957F\u6216\u9002\u5408\u8FD9\u7C7B\u5DE5\u4F5C\u7684\u5019\u9009\u6210\u5458\uFF1B\u63CF\u8FF0\u91CC\u7ED9\u51FA\u6210\u672C\u548C\u901F\u5EA6\u65F6\uFF0C\u4E5F\u8981\u4E00\u5E76\u6743\u8861\u3002\u6CA1\u6709\u63CF\u8FF0\u7684\u5019\u9009\u6210\u5458\u662F\u901A\u7528\u6210\u5458\uFF1A\u628A\u9002\u5408\u5B83\u6240\u7528\u6A21\u578B\u7684\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\u3002",
+    "- \u63CF\u8FF0\u4E2D\u8BF4\u67D0\u4E2A\u5019\u9009\u6210\u5458\u4E0D\u80FD\u505A\u7684\u4E8B\u662F\u786C\u6027\u89C4\u5219\uFF1A\u7EDD\u4E0D\u628A\u8FD9\u7C7B\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF0C\u4F5C\u4E3A\u66F4\u5927\u4EFB\u52A1\u7684\u4E00\u90E8\u5206\u4E5F\u4E0D\u884C\u3002\u6CA1\u6709\u4EFB\u4F55\u5019\u9009\u6210\u5458\u9002\u5408\u67D0\u9879\u5DE5\u4F5C\u65F6\uFF0C\u4F60\u81EA\u5DF1\u505A\uFF0C\u6216\u8005\u544A\u8BC9\u7528\u6237\u3002",
     `- \u4F60\u53EF\u4EE5\u76F4\u63A5\u7528\u5019\u9009\u6210\u5458\u7684\u540D\u5B57\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF1A\u5728 \`${T2.delegate}\` \u6216\u56E2\u961F\u4EFB\u52A1\u4E2D\u628A\u5B83\u7684\u540D\u5B57\u4F5C\u4E3A\u89D2\u8272\uFF08role\uFF09\u3002`,
     `- \u5F53\u540C\u4E00\u4E2A\u6A21\u578B\u9700\u8981\u627F\u62C5\u66F4\u5177\u4F53\u7684\u804C\u8D23\u65F6\uFF08\u6709\u81EA\u5DF1\u7684\u6307\u4EE4\u6216\u6587\u4EF6\u5939\uFF0C\u6216\u8005\u4E00\u4E2A\u6A21\u578B\u627F\u62C5\u4E24\u9879\u804C\u8D23\uFF09\uFF0C\u7528 \`${T2.role}\` \u7EC4\u5EFA\u4E00\u4E2A\u89D2\u8272\uFF1A\u4E00\u4E2A\u7B80\u77ED\u7684\u5C0F\u5199\u540D\u79F0\u3001\u5019\u9009\u6210\u5458\u3001\u6307\u4EE4\u548C\u6587\u4EF6\u5939\u3002\u89D2\u8272\u53EA\u80FD\u8FD0\u884C\u5728\u67D0\u4E2A\u5019\u9009\u6210\u5458\u7684\u667A\u80FD\u4F53\u548C\u6A21\u578B\u4E0A\u3002`,
     "- \u56FA\u5B9A\u89D2\u8272\u4E0E\u5019\u9009\u6210\u5458\u540C\u65F6\u53EF\u7528\u3002\u62C6\u5206\u5DE5\u4F5C\u65F6\uFF0C\u7528\u4E00\u53E5\u8BDD\u8BF4\u660E\u54EA\u4E2A\u5019\u9009\u6210\u5458\u8D1F\u8D23\u4EC0\u4E48\u4EE5\u53CA\u539F\u56E0\uFF0C\u5E76\u5F15\u7528\u5B83\u7684\u63CF\u8FF0\u3002"
@@ -23392,7 +23397,7 @@ async function readPresets(orca2) {
   });
 }
 async function writePresets(orca2, presets) {
-  await orca2.storage.set(PRESETS_KEY, presets.map((preset) => PresetSchema.parse(preset)));
+  await orca2.storage.set(PRESETS_KEY, toJson(presets.map((preset) => PresetSchema.parse(preset))));
 }
 async function teamOfLead(orca2, lead) {
   const source = lead.source;
@@ -23963,7 +23968,7 @@ async function activate(orca2) {
   for (const [name2, handler] of Object.entries(api)) {
     orca2.panels.handle(`api.${name2}`, async (input2) => {
       if (input2 && typeof input2.locale === "string") locale = input2.locale;
-      return handler(input2 ?? {});
+      return toJson(await handler(input2 ?? {}));
     });
   }
   let pending = null;

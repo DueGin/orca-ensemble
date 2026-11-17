@@ -59,7 +59,7 @@ export const STRINGS = {
     "roles": "Fixed roles",
     "rolesHint": "Members with a set job and set folders. The lead starts them when a request needs them.",
     "candidates": "Candidate pool",
-    "candidatesHint": "Not roles: a pool of agents and models. During a session the lead reads their descriptions and decides which work goes to whom."
+    "candidatesHint": "Not roles: a pool of agents and models. During a session the lead gives each one work by its description, or by its model when it has none."
    },
    "facet": {
     "perRequest": "Picked per request",
@@ -96,7 +96,7 @@ export const STRINGS = {
    "candidate": {
     "handle": "Handle",
     "handleHint": "The name the lead picks it by. Empty: “{{handle}}”, from its model.",
-    "notes": "Description",
+    "notes": "Description (optional)",
     "useTemplate": "Use the template",
     "template": "Good at / suited for: …\nCost or speed: …\nDo not give it: …",
     "add": "Add candidate",
@@ -114,7 +114,6 @@ export const STRINGS = {
     "candidateIsRole": "A role is already named “{{name}}”; give this candidate another handle.",
     "empty": "A team needs at least one role or one candidate.",
     "noInstructions": "No instructions: the lead knows only the role's name.",
-    "noNotes": "No description: the lead picks candidates by what they are good at.",
     "modeNone": "The mode is None: the lead works alone, so roles and candidates aren't used."
    },
    "where": {
@@ -656,7 +655,7 @@ export const STRINGS = {
     "roles": "固定角色",
     "rolesHint": "职责和目录都固定的成员。请求需要时，由协调器启动它们。",
     "candidates": "候选成员池",
-    "candidatesHint": "它们不是角色，而是一组可用的智能体和模型。会话中，协调器读它们的描述，决定把哪些工作交给谁。"
+    "candidatesHint": "它们不是角色，而是一组可用的智能体和模型。会话中，协调器按描述给它们分配工作；没写描述的，按所用模型的能力分配。"
    },
    "facet": {
     "perRequest": "按请求选择",
@@ -693,7 +692,7 @@ export const STRINGS = {
    "candidate": {
     "handle": "代号",
     "handleHint": "协调器用来点名的名字。留空时根据模型取名为「{{handle}}」。",
-    "notes": "描述",
+    "notes": "描述（可选）",
     "useTemplate": "使用模板",
     "template": "擅长 / 适合：…\n成本或速度：…\n不要交给它：…",
     "add": "添加候选成员",
@@ -711,7 +710,6 @@ export const STRINGS = {
     "candidateIsRole": "已有角色叫「{{name}}」，请给这个候选成员换个代号。",
     "empty": "团队至少需要一个角色或一个候选成员。",
     "noInstructions": "没有说明：协调器只知道这个角色的名字。",
-    "noNotes": "没有描述：协调器是按擅长什么来挑选候选成员的。",
     "modeNone": "模式为「无」：协调器独自完成，角色和候选成员都不会用到。"
    },
    "where": {

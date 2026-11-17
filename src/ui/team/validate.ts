@@ -51,9 +51,6 @@ export function checkDraft(team: TeamDraft): Check {
   team.roles.forEach((role, index) => {
     if (!role.instructions.trim()) issues.push({ field: `roles.${index}.instructions`, level: "warning", message: t("editor.v.noInstructions") });
   });
-  team.candidates.forEach((candidate, index) => {
-    if (!candidate.notes.trim()) issues.push({ field: `candidates.${index}.notes`, level: "warning", message: t("editor.v.noNotes") });
-  });
   if (team.mode === "none" && (team.roles.length || team.candidates.length)) issues.push({ field: "mode", level: "warning", message: t("editor.v.modeNone") });
   const errors = issues.filter((issue) => issue.level === "error").length;
   return { issues, errors, warnings: issues.length - errors, team: result.success ? result.data : null };

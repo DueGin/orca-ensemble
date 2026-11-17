@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:net";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { toJson } from "../shared/json";
 import { PLUGIN_MESSAGE_PREFIX } from "../shared/modes";
 import { dataDir, socketPath } from "../shared/paths";
 import type { ShimRequest } from "../shared/ipc";
@@ -47,7 +48,8 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
   for (const [name, handler] of Object.entries(api)) {
     orca.panels.handle(`api.${name}`, async (input: { locale?: string } & Record<string, unknown>) => {
       if (input && typeof input.locale === "string") locale = input.locale;
-      return (handler as (input: unknown) => unknown)(input ?? {});
+      // The answer must be plain JSON too (see shared/json.ts).
+      return toJson(await (handler as (input: unknown) => unknown)(input ?? {}));
     });
   }
   let pending: ReturnType<typeof setTimeout> | null = null;

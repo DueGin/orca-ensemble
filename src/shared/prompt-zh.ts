@@ -29,7 +29,7 @@ function teamTable(team: Team): string[] {
 function candidateList(team: Team): string[] {
   return team.candidates.flatMap((candidate) => [
     `- ${candidate.name} (${runtimeLabel(candidate)})`,
-    ...(candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  （无描述）"]),
+    ...(candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`).filter((line) => line.trim()) : ["  （无描述：通用成员，按它所用模型的能力分配工作）"]),
   ]);
 }
 
@@ -72,8 +72,8 @@ function modeRules(): string[] {
 function formingRules(): string[] {
   return [
     "## 给候选成员分配工作",
-    "- 候选成员是一个模型，不是一个岗位：除了描述里写的内容，它没有任何固定设定。把每项工作交给描述中表明擅长或适合这类工作的候选成员；描述里给出成本和速度时，也要一并权衡。",
-    "- 描述中说某个候选成员不能做的事是硬性规则：绝不把这类工作交给它，作为更大任务的一部分也不行。没有任何描述适合某项工作时，你自己做，或者告诉用户。",
+    "- 候选成员是一个模型，不是一个岗位：除了描述里写的内容，它没有任何固定设定。把每项工作交给描述中表明擅长或适合这类工作的候选成员；描述里给出成本和速度时，也要一并权衡。没有描述的候选成员是通用成员：把适合它所用模型的工作交给它。",
+    "- 描述中说某个候选成员不能做的事是硬性规则：绝不把这类工作交给它，作为更大任务的一部分也不行。没有任何候选成员适合某项工作时，你自己做，或者告诉用户。",
     `- 你可以直接用候选成员的名字把工作交给它：在 \`${T.delegate}\` 或团队任务中把它的名字作为角色（role）。`,
     `- 当同一个模型需要承担更具体的职责时（有自己的指令或文件夹，或者一个模型承担两项职责），用 \`${T.role}\` 组建一个角色：一个简短的小写名称、候选成员、指令和文件夹。角色只能运行在某个候选成员的智能体和模型上。`,
     "- 固定角色与候选成员同时可用。拆分工作时，用一句话说明哪个候选成员负责什么以及原因，并引用它的描述。",

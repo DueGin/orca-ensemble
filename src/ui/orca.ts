@@ -1,4 +1,5 @@
 // The frame's link to Orca and to the plugin's worker. Orca defines a frozen `window.orca` before any plugin code runs.
+import { toJson } from "../shared/json";
 import type { Api } from "../worker/api";
 
 interface OrcaFrame {
@@ -30,7 +31,8 @@ type Output<K extends keyof Handlers> = Awaited<ReturnType<Handlers[K]>>;
 
 /** Calls the plugin's worker; starts it if needed. */
 export function call<K extends keyof Handlers>(name: K, input?: Input<K>, timeoutMs = 60_000): Promise<Output<K>> {
-  return window.orca.plugin.request<Output<K>>(`api.${String(name)}`, { ...(input ?? {}), locale: window.orca.locale }, { timeoutMs });
+  // Orca accepts only plain JSON here; an unset optional field (`undefined`) would fail the request with "Invalid input".
+  return window.orca.plugin.request<Output<K>>(`api.${String(name)}`, toJson({ ...(input ?? {}), locale: window.orca.locale }), { timeoutMs });
 }
 
 /** Runs `handler` whenever the worker reports a change (runs, sessions, presets). */

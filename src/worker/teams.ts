@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { toJson } from "../shared/json";
 import { checkTeam, parseTeam, PresetSchema, serializeTeam, teamFileName, teamTitle, TEAM_SUFFIX, TEAMS_DIR, type Preset, type Team } from "../shared/team";
 import type { OrcaWorker } from "./adapter";
 import type { LeadSession, TeamSource } from "./store";
@@ -62,7 +63,7 @@ export async function readPresets(orca: OrcaWorker): Promise<Preset[]> {
 }
 
 export async function writePresets(orca: OrcaWorker, presets: readonly Preset[]): Promise<void> {
-  await orca.storage.set(PRESETS_KEY, presets.map((preset) => PresetSchema.parse(preset)));
+  await orca.storage.set(PRESETS_KEY, toJson(presets.map((preset) => PresetSchema.parse(preset))));
 }
 
 /** A lead's team: its file read again (so edits apply), its preset, else the copy taken when it started. */
