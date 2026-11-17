@@ -121,8 +121,6 @@ npm run watch                    # rebuild dist/ on change; Orca reloads a devel
 
 Layout: `src/worker/` (the plugin worker: hooks, the `agent-team` server, runs, the panel API), `src/cli/agent-team.ts` (the command), `src/shared/` (run model, task board, data flow, prompts in English and Chinese), `src/ui/` (panel, team editor and run report frames, React), `dev/` (static harnesses for the UI with a fake `window.orca`).
 
-This is a port of [paseo-ensemble](https://github.com/DueGin/paseo-ensemble), the same plugin for Paseo (formerly `paseo-agent-team`).
-
 ---
 
 ## 中文
@@ -216,8 +214,6 @@ orca plugin dev load .        # 第一次需要批准权限
 npm run typecheck && npm test   # 单元测试，包括用模拟的 Orca 把两种模式各跑一遍
 npm run watch                    # 改动后重新构建 dist/；Orca 会重载开发中的插件
 ```
-
-这是 [paseo-ensemble](https://github.com/DueGin/paseo-ensemble)（Paseo 版，原名 `paseo-agent-team`）的 Orca 移植。
 
 ## License
 
