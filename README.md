@@ -121,6 +121,8 @@ npm run watch                    # rebuild dist/ on change; Orca reloads a devel
 
 Layout: `src/worker/` (the plugin worker: hooks, the `agent-team` server, runs, the panel API), `src/cli/agent-team.ts` (the command), `src/shared/` (run model, task board, data flow, prompts in English and Chinese), `src/ui/` (panel, team editor and run report frames, React), `dev/` (static harnesses for the UI with a fake `window.orca`).
 
+Versions: each release is a git tag `vX.Y.Z`, the version in `orca-plugin.json` and `package.json`. To release, bump both, run `npm run build`, commit, then tag and push the tag.
+
 ---
 
 ## 中文
@@ -214,6 +216,8 @@ orca plugin dev load .        # 第一次需要批准权限
 npm run typecheck && npm test   # 单元测试，包括用模拟的 Orca 把两种模式各跑一遍
 npm run watch                    # 改动后重新构建 dist/；Orca 会重载开发中的插件
 ```
+
+版本：每个发布版本都有对应的 git tag `vX.Y.Z`，与 `orca-plugin.json` 和 `package.json` 里的版本号一致。发布时同时改这两处的版本号，运行 `npm run build`，提交后打 tag 并推送。
 
 ## License
 
