@@ -7,6 +7,7 @@ export interface DocSession {
   readonly value: Draft;
   readonly readOnly: boolean;
   change(value: Draft): void;
+  /** Saves now: edits waiting for a save go to the file instead of waiting for Orca's next one. */
   flush(): Promise<void>;
   onReplace(handler: (value: Draft) => void): { dispose(): void };
 }

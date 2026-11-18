@@ -9,6 +9,7 @@ import { call, onChanged, orca } from "./orca";
 import { SessionTab } from "./panel/session";
 import { StartTab } from "./panel/start";
 import { TeamsTab } from "./panel/teams";
+import { reloadTeamFiles } from "./panel/team-files";
 
 type Tab = "session" | "start" | "teams";
 
@@ -101,7 +102,7 @@ function App() {
               {state.focused ? <span className="tiny muted ellipsis">{state.focused.projectName ? `${state.focused.projectName} · ` : ""}{state.focused.name}{state.focused.branch ? ` · ${state.focused.branch}` : ""}</span> : null}
             </div>
           </div>
-          <Button icon="refresh" variant="ghost" size="sm" title={t("app.retry")} onClick={refresh} />
+          <Button icon="refresh" variant="ghost" size="sm" title={t("app.retry")} onClick={() => { refresh(); reloadTeamFiles(); }} />
         </div>
         <Segmented<Tab>
           stretch

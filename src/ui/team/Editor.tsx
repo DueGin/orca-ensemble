@@ -338,13 +338,21 @@ export function Editor({ session }: { session: DocSession }) {
     return () => subscription.dispose();
   }, [session, reset, push]);
 
+  // Saves the file now: the same flush Orca runs on ⌘S, and the button next to undo/redo.
+  const save = useCallback(() => {
+    void session.flush().then(() => push({ text: t("editor.saved"), tone: "ok" }), (reason: unknown) => push({ text: t("editor.saveFailed", { error: String((reason as Error)?.message ?? reason) }), tone: "bad" }));
+  }, [session, push]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.isComposing || !(event.metaKey || event.ctrlKey) || event.altKey) return;
       // The start dialog's request box keeps its own native undo.
       if ((event.target as Element | null)?.closest?.(".te-modal")) return;
       const key = event.key.toLowerCase();
-      if (key === "z" || event.code === "KeyZ") {
+      if (key === "s" || event.code === "KeyS") {
+        event.preventDefault();
+        save();
+      } else if (key === "z" || event.code === "KeyZ") {
         event.preventDefault();
         if (event.shiftKey) redo();
         else undo();
@@ -355,7 +363,7 @@ export function Editor({ session }: { session: DocSession }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo]);
+  }, [undo, redo, save]);
 
   // The section in view, for the side navigation.
   useEffect(() => {
@@ -488,6 +496,7 @@ export function Editor({ session }: { session: DocSession }) {
                 <button type="button" className="te-tool" disabled={!history.canUndo || readOnly} title={t("editor.undoKey")} aria-label={t("editor.undo")} onClick={undo}><Icon name="undo" size={14} /></button>
                 <button type="button" className="te-tool" disabled={!history.canRedo || readOnly} title={t("editor.redoKey")} aria-label={t("editor.redo")} onClick={redo}><Icon name="redo" size={14} /></button>
               </div>
+              <Button icon="save" onClick={save} disabled={readOnly} title={t("editor.saveKey")}>{t("editor.save")}</Button>
               <Status check={check} team={team} onJump={jumpTo} />
               <Button icon="star" onClick={savePreset} disabled={!check.team || saving} title={check.team ? t("editor.savePresetHint") : t("editor.fixFirst")}>
                 <span className="te-hide-sm">{t("editor.savePreset")}</span>

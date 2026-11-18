@@ -7,6 +7,13 @@ import { call } from "../orca";
 
 export type TeamFileEntry = { file: string; title: string; team: Team | null; errors: string[] };
 
+const RELOAD = "ensemble:team-files";
+
+/** Reads the team files again now, wherever they are shown; the panel's refresh button calls it. */
+export function reloadTeamFiles(): void {
+  window.dispatchEvent(new Event(RELOAD));
+}
+
 export function useTeamFiles(root: string | null | undefined, intervalMs = 3000, hiddenIntervalMs = 15_000): { files: TeamFileEntry[] | null; reload(): void } {
   const [files, setFiles] = useState<TeamFileEntry[] | null>(null);
   const shown = useRef("");
@@ -48,6 +55,7 @@ export function useTeamFiles(root: string | null | undefined, intervalMs = 3000,
     };
     const timer = setInterval(tick, Math.min(intervalMs, 1000));
     window.addEventListener("focus", now);
+    window.addEventListener(RELOAD, now);
     const onVisible = () => {
       if (document.visibilityState === "visible") now();
     };
@@ -55,6 +63,7 @@ export function useTeamFiles(root: string | null | undefined, intervalMs = 3000,
     return () => {
       clearInterval(timer);
       window.removeEventListener("focus", now);
+      window.removeEventListener(RELOAD, now);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [reload, intervalMs, hiddenIntervalMs]);
