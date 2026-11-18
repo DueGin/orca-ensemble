@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
 import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Surface } from "../shared/agents";
 import { memberOf, newRunId, normalizeRun, type PendingBrief, type Run } from "../shared/collab";
 import { logEvents, traceRun, type FlowParty, type NewEvent } from "../shared/flow";
 import type { CollabMode, PromptLanguage, TeamMode } from "../shared/modes";
@@ -46,12 +47,15 @@ export interface LeadSession {
 
 /** A member: the terminal it runs in and the lead it works for. */
 export interface MemberSession {
+  /** Its terminal's handle, or a chat's handle (`structured-agent-session-…`). */
   terminalId: string;
   leadTerminalId: string;
   role: string;
   agent: string;
   model?: string;
   effort?: string;
+  /** Chat or terminal; records from before this field run in terminals. */
+  surface?: Surface;
   title: string;
   createdAt: string;
 }
@@ -79,6 +83,9 @@ export interface PendingLaunch {
   lead?: Omit<LeadSession, "terminalId" | "createdAt" | "endedAt" | "agentSessionId">;
   member?: Omit<MemberSession, "terminalId" | "createdAt">;
   planner?: { root: string; file: string; goal: string };
+  /** The model and effort to put on the agent's own command line when Orca's launch couldn't take them (see agents.ts). */
+  model?: string;
+  effort?: string;
   createdAt: string;
 }
 

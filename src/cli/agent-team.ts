@@ -4,6 +4,7 @@
 import { realpathSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
+import { callerHandle } from "../shared/agents";
 import { socketPath } from "../shared/paths";
 
 function pluginRoot(): string {
@@ -53,7 +54,8 @@ async function main(): Promise<number> {
   const request = {
     command,
     input,
-    terminalId: process.env.ORCA_TERMINAL_HANDLE ?? null,
+    // A terminal's handle, or the chat whose shell runs this (ORCA_AGENT_SESSION_ID names it).
+    terminalId: callerHandle(process.env),
     workspaceId: process.env.ORCA_WORKSPACE_ID ?? process.env.ORCA_WORKTREE_ID ?? null,
     userDataPath: process.env.ORCA_USER_DATA_PATH ?? null,
     cwd: process.cwd(),

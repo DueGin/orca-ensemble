@@ -100,7 +100,7 @@ function teamRules(): string[] {
 export function orchestratorPrompt(team: Team, source: string): string {
   const notes = team.roles.filter((role) => role.instructions.trim()).map((role) => `- ${role.name}: ${role.instructions.trim()}`);
   return [
-    "You are the lead of an agent team in Orca. The user talks to you; the team's members work for you, each in its own Orca terminal in your workspace.",
+    "You are the lead of an agent team in Orca. The user talks to you; the team's members work for you, each in its own agent in your workspace: a chat (Orca's graphical client) or a terminal, as the team says.",
     team.goal.trim() ? `Team goal: ${team.goal.trim()}` : "",
     `The team comes from ${source}.`,
     "",
@@ -299,6 +299,18 @@ export function planWaitingPrompt(run: Run, task: BoardTask): string {
 export function modeChangedPrompt(mode: TeamMode | null, configured: TeamMode): string {
   const now = mode ?? configured;
   return `${PLUGIN_MESSAGE_PREFIX} The user set this session's collaboration mode to ${now}${mode === null ? " (the team's mode)" : ""}. ${MODE_LINE[now]} Follow it from the next request; a run already in progress keeps its mode.`;
+}
+
+/**
+ * What a chat needs and a terminal gets from its launch hook: the `agent-team` command is not on a chat's PATH, so it is
+ * called by its full path, and the team's messages arrive as Orca mail (answer them with agent-team, not Orca's reply).
+ */
+export function chatNote(bin: string): string {
+  return [
+    `${PLUGIN_MESSAGE_PREFIX} You run as an Orca chat, so \`${TEAM_BIN}\` is not on your PATH. Run it by its full path:`,
+    `  '${bin}' status`,
+    `Team messages from the lead or other members arrive as Orca mail (a message from "Ensemble"). Answer with \`${TEAM_BIN}\` tools, such as ${M.report}, not with \`orca orchestration reply\`.`,
+  ].join("\n");
 }
 
 /** A member's first message: who it is, then its first piece of work. */

@@ -10,7 +10,9 @@ import { teamFileName, TEAMS_DIR } from "../shared/team";
 import { blankTeam, checkTeam, EFFORTS, KNOWN_AGENTS, MODEL_SUGGESTIONS, newPresetId, teamTitle, type Preset, type Team } from "../shared/team";
 import type { AppState, LeadView, PendingBriefView, ProjectView, RunDetail, RunView, StartInput } from "../shared/views";
 import type { OrcaAdapter } from "./adapter";
-import { advance } from "./collab";
+import { surfaceOf, type Surface } from "../shared/agents";
+import { LaunchRefused } from "./adapter";
+import { advance, resolveModel } from "./collab";
 import { newLaunchId, type LeadSession, type Store, type TeamSource } from "./store";
 import { readPresets, saveTeamFile, teamFiles, teamOfLead, writePresets } from "./teams";
 
@@ -218,6 +220,23 @@ export function createApi(deps: ApiDeps) {
     };
   }
 
+  /**
+   * Starts the lead in a terminal or a chat, as its team says; a chat Orca refuses here falls back to a terminal. Orca's
+   * launch takes the model; where it refuses one for an agent, the terminal launch's hook adds the CLI's own flags.
+   */
+  async function startLead(input: { path: string; team: Team; prompt: string }): Promise<{ terminalId: string; surface: Surface }> {
+    const lead = input.team.lead;
+    const wanted = surfaceOf(lead);
+    const model = lead.model && lead.agent === "pi" ? await resolveModel(lead.model) : lead.model;
+    const prompt = input.prompt;
+    try {
+      return await adapter.launch({ path: input.path, agent: lead.agent, model, effort: lead.effort, prompt, focus: true, surface: wanted });
+    } catch (error) {
+      if (!(error instanceof LaunchRefused) || wanted !== "chat") throw error;
+      return adapter.launch({ path: input.path, agent: lead.agent, model, effort: lead.effort, prompt, focus: true, surface: "terminal" });
+    }
+  }
+
   /** Starts a lead in a workspace (existing, or a new worktree of a project) on a team, with the user's request. */
   async function start(input: StartInput): Promise<{ terminalId: string; workspaceId: string | null; path: string }> {
     const settings = await deps.settings();
@@ -232,11 +251,17 @@ export function createApi(deps: ApiDeps) {
     const sourceLabel = source.kind === "file" ? source.file : source.kind === "preset" ? `the preset "${teamTitle(team)}"` : "the team chosen at start";
     const prompt = P.leadStartPrompt(team, sourceLabel, input.request);
     const systemPrompt = P.orchestratorPrompt(team, sourceLabel);
-    const marked = `[ensemble:${launchId}]\n${prompt}`;
+    const chatMarked = `${promptsFor(language).chatNote(adapter.teamBin)}\n\n${prompt}`;
     const base = { projectId: null, projectName: "", source, team, language, mode: override, locked: null, roles: [], brief: null };
+    const wanted = surfaceOf(team.lead);
+    const model = team.lead.model && team.lead.agent === "pi" ? await resolveModel(team.lead.model) : team.lead.model;
+    const marked = wanted === "chat" ? chatMarked : `[ensemble:${launchId}]\n${prompt}`;
     if (input.newWorkspace && input.projectPath) {
       await store.addLaunch({ id: launchId, kind: "lead", prompt, systemPrompt, lead: { ...base, workspaceId: null, path: "" }, createdAt: new Date().toISOString() });
-      const made = await adapter.createWorkspace({ projectPath: input.projectPath, name: input.newWorkspace.name, baseBranch: input.newWorkspace.baseBranch, agent: team.lead.agent, model: team.lead.model, effort: team.lead.effort, prompt: marked });
+      const made = await adapter.createWorkspace({ projectPath: input.projectPath, name: input.newWorkspace.name, baseBranch: input.newWorkspace.baseBranch, agent: team.lead.agent, model, effort: team.lead.effort, prompt: marked, surface: wanted }).catch(async (error: unknown) => {
+        if (!(error instanceof LaunchRefused) || wanted !== "chat") throw error;
+        return adapter.createWorkspace({ projectPath: input.projectPath!, name: input.newWorkspace!.name, baseBranch: input.newWorkspace!.baseBranch, agent: team.lead.agent, model, effort: team.lead.effort, prompt: `[ensemble:${launchId}]\n${prompt}`, surface: "terminal" });
+      });
       await store.updateIndex((index) => {
         const lead = index.leads[made.terminalId];
         index.leads[made.terminalId] = { ...(lead ?? { ...base, terminalId: made.terminalId, agentSessionId: null, createdAt: new Date().toISOString(), endedAt: null }), workspaceId: lead?.workspaceId ?? made.workspaceId, path: made.path, projectName: input.projectPath!.split("/").pop() ?? "" } as LeadSession;
@@ -246,7 +271,7 @@ export function createApi(deps: ApiDeps) {
     const path = input.workspacePath ?? input.projectPath;
     if (!path) throw new Error("Pick a workspace or a project.");
     await store.addLaunch({ id: launchId, kind: "lead", prompt, systemPrompt, lead: { ...base, workspaceId: null, path }, createdAt: new Date().toISOString() });
-    const { terminalId } = await adapter.launch({ path, agent: team.lead.agent, model: team.lead.model, effort: team.lead.effort, prompt: marked, focus: true });
+    const { terminalId } = await startLead({ path, team, prompt: marked });
     await store.updateIndex((index) => {
       const lead = index.leads[terminalId];
       index.leads[terminalId] = { ...(lead ?? { ...base, terminalId, workspaceId: null, agentSessionId: null, createdAt: new Date().toISOString(), endedAt: null }), path, projectName: path.split("/").pop() ?? "" } as LeadSession;
@@ -388,7 +413,11 @@ export function createApi(deps: ApiDeps) {
       await advance(runId);
       return { ok: true };
     },
-    catalog: async () => ({ agents: [...KNOWN_AGENTS], models: MODEL_SUGGESTIONS, efforts: [...EFFORTS] }),
+    catalog: async () => {
+      // Agents and models the host can run: pi's own list (as provider/id) joins the built-in suggestions.
+      const pi = await adapter.piModels().catch(() => [] as string[]);
+      return { agents: [...KNOWN_AGENTS], models: pi.length ? { ...MODEL_SUGGESTIONS, pi } : MODEL_SUGGESTIONS, efforts: [...EFFORTS] };
+    },
     validateTeam: async ({ team }: { team: unknown }) => {
       const checked = checkTeam(team);
       return checked.ok ? { ok: true as const, team: checked.team } : { ok: false as const, errors: checked.errors };

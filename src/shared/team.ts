@@ -2,6 +2,7 @@
 // language the agents work in. Teams live in the project as `.agents/teams/<name>.team.json`, shared through git and
 // readable by the agents; the plugin's own editor opens them. Presets are teams kept by the plugin for every project.
 import { z } from "zod";
+import { SURFACES } from "./agents";
 import { PROMPT_LANGUAGES, TEAM_MODES } from "./modes";
 
 /** Where a project keeps its teams, and the suffix that opens a file in the team editor. */
@@ -25,11 +26,15 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 const name = z.string().trim().min(1);
 const optionalText = z.string().trim().optional().transform((value) => (value ? value : undefined));
 
-/** How an agent runs: the CLI Orca starts, and optionally the model and reasoning effort it uses. */
+/**
+ * How an agent runs: the CLI Orca starts, optionally the model and reasoning effort it uses, and whether it opens as a
+ * chat (Orca's graphical client) or in a terminal. Without `surface`, an agent that can be a chat is one (see agents.ts).
+ */
 export const RuntimeSchema = z.object({
   agent: name,
   model: optionalText,
   effort: optionalText,
+  surface: z.enum(SURFACES).optional(),
 });
 
 export const RoleSchema = RuntimeSchema.extend({

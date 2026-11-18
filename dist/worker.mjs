@@ -102,6 +102,70 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir as homedir2, platform } from "node:os";
 import { dirname, join as join2 } from "node:path";
+
+// src/shared/agents.ts
+var SURFACES = ["chat", "terminal"];
+var CHAT_AGENTS = /* @__PURE__ */ new Set(["claude", "codex", "grok", "cursor", "kimi", "copilot"]);
+var canChat = (agent) => CHAT_AGENTS.has(agent.trim());
+var CHAT_OFFERED = /* @__PURE__ */ new Set([...CHAT_AGENTS, "pi", "opencode"]);
+function surfaceOf(runtime) {
+  if (runtime.surface === "chat") return "chat";
+  if (!canChat(runtime.agent)) return "terminal";
+  return runtime.surface ?? "chat";
+}
+var CHAT_HANDLE_PREFIX = "structured-agent-session-";
+var isChatHandle = (handle) => !!handle && handle.startsWith(CHAT_HANDLE_PREFIX);
+var chatSessionId = (handle) => handle.slice(CHAT_HANDLE_PREFIX.length);
+function chatHandleFromPaneKey(paneKey) {
+  if (!paneKey || !paneKey.startsWith(CHAT_HANDLE_PREFIX)) return null;
+  const at = paneKey.indexOf(":");
+  return at < 0 ? paneKey : paneKey.slice(0, at);
+}
+var CLI_MODEL_FLAGS = {
+  pi: { model: "--model", effort: "--thinking" }
+};
+function cliModelArgs(agent, model, effort) {
+  const flags = CLI_MODEL_FLAGS[agent.trim()];
+  if (!flags || !model) return null;
+  return [flags.model, model, ...effort && flags.effort ? [flags.effort, effort] : []];
+}
+function parsePiModels(output2) {
+  const models = [];
+  for (const line of output2.split("\n")) {
+    const columns = line.trim().split(/\s{2,}/);
+    if (columns.length < 2 || columns[0] === "provider") continue;
+    const [provider, model] = columns;
+    if (!provider || !model || /\s/.test(provider) || /\s/.test(model)) continue;
+    models.push(`${provider}/${model}`);
+  }
+  return [...new Set(models)];
+}
+function resolvePiModel(model, known) {
+  const wanted = model.trim();
+  if (!known.length) return { ok: true, model: wanted };
+  const lower = wanted.toLowerCase();
+  const exact = known.find((entry) => entry.toLowerCase() === lower);
+  if (exact) return { ok: true, model: exact };
+  const byId = known.filter((entry) => entry.slice(entry.indexOf("/") + 1).toLowerCase() === lower);
+  if (byId.length === 1) return { ok: true, model: byId[0] };
+  if (byId.length > 1) return { ok: false, error: "ambiguous", matches: byId };
+  if (wanted.includes("/")) return { ok: true, model: wanted };
+  const near = known.filter((entry) => entry.toLowerCase().includes(lower)).slice(0, 8);
+  return { ok: false, error: "unknown", matches: near };
+}
+
+// src/worker/adapter.ts
+var LaunchRefused = class extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+  }
+};
+function launchRefusal(message) {
+  if (/can['’]t open as a chat|cannot open as a chat|no structured session/i.test(message)) return "chat";
+  if (/does not support launch-time model selection/i.test(message)) return "model";
+  return null;
+}
 function profileFromParent() {
   if (platform() === "win32") return null;
   try {
@@ -129,7 +193,7 @@ function cliBeside(execPath) {
   }
   return null;
 }
-var OrcaAdapter = class {
+var OrcaAdapter = class _OrcaAdapter {
   constructor(orca2) {
     this.orca = orca2;
     this.cli = cliBeside(process.execPath);
@@ -137,6 +201,12 @@ var OrcaAdapter = class {
   }
   /** Agents by terminal id, kept from agent.status.changed and agents.list. */
   agents = /* @__PURE__ */ new Map();
+  /** Chats by their agent's session id, learned from status events: agents.list names a chat only by session. */
+  chatsBySession = /* @__PURE__ */ new Map();
+  /** The workspace path a message to a chat is sent from (the team's), set by the collaboration code. */
+  chatHome = () => null;
+  /** The `agent-team` command, for agents whose shell has no PATH from the launch hook (chats). */
+  teamBin = "agent-team";
   cli;
   profile;
   /** The profile an agent's shell reported; it wins over a guess. */
@@ -160,16 +230,22 @@ var OrcaAdapter = class {
         }
         if (parsed?.ok) return resolve(parsed.result);
         const message = parsed?.error?.message ?? error62?.message ?? (String(stdout).trim() || "orca CLI failed");
-        reject(new Error(message));
+        reject(Object.assign(new Error(message), { code: parsed?.error?.code }));
       });
     });
   }
   // ----- Agents and terminals
+  /** The terminal or chat a status event is about: chats come with a pane key only. */
+  static handleOf(payload) {
+    return payload.terminalId ?? chatHandleFromPaneKey(payload.paneKey);
+  }
   noteStatus(payload) {
-    if (!payload.terminalId) return;
-    const was = this.agents.get(payload.terminalId);
-    this.agents.set(payload.terminalId, {
-      terminalId: payload.terminalId,
+    const handle = _OrcaAdapter.handleOf(payload);
+    if (!handle) return;
+    if (payload.sessionId && isChatHandle(handle)) this.chatsBySession.set(payload.sessionId, handle);
+    const was = this.agents.get(handle);
+    this.agents.set(handle, {
+      terminalId: handle,
       title: payload.title ?? was?.title ?? null,
       agent: was?.agent ?? null,
       state: payload.state,
@@ -197,7 +273,8 @@ var OrcaAdapter = class {
   async listAgents(workspaceId) {
     const scoped = workspaceId && (this.orca.api.major > 1 || this.orca.api.minor >= 10);
     try {
-      const result = await this.orca.host.call("agents.list", scoped ? { workspaceId } : {});
+      const listed = await this.orca.host.call("agents.list", scoped ? { workspaceId } : {});
+      const result = { agents: listed.agents.map((row) => row.terminalId || !row.sessionId || !this.chatsBySession.has(row.sessionId) ? row : { ...row, terminalId: this.chatsBySession.get(row.sessionId) }) };
       if (scoped || !workspaceId) return result.agents;
       const focused = await this.focusedWorkspace().catch(() => null);
       const same = (a, b) => !!a && !!b && (a === b || a.endsWith(`::${b.split("::").pop()}`) || b.endsWith(`::${a.split("::").pop()}`));
@@ -214,6 +291,7 @@ var OrcaAdapter = class {
   async probeState(terminalId) {
     const known = this.agents.get(terminalId);
     if (known) return known.state;
+    if (isChatHandle(terminalId)) return null;
     const cached2 = this.probes.get(terminalId);
     if (cached2 && Date.now() - cached2.at < 1e4) return cached2.state;
     let state = null;
@@ -235,6 +313,7 @@ var OrcaAdapter = class {
     return this.orca.host.call("workspace.readContext", {});
   }
   async readTerminal(terminalId, maxLines = 400) {
+    if (isChatHandle(terminalId)) return [];
     try {
       const result = await this.orca.host.call("terminal.read", { terminalId, maxLines });
       return result.lines;
@@ -242,8 +321,23 @@ var OrcaAdapter = class {
       return [];
     }
   }
-  /** Whether the terminal still runs; a closed one is gone for good. */
+  /** Chats that refused mail as gone: their tab was closed. */
+  goneChats = /* @__PURE__ */ new Set();
+  /**
+   * Whether a chat is still open: Orca lists the agents of its workspace by session, so a chat whose session no longer
+   * shows (and that said nothing for a minute) was closed. Without a way to tell, it counts as open.
+   */
+  async chatAlive(handle) {
+    if (this.goneChats.has(handle)) return false;
+    const known = this.agents.get(handle);
+    const scoped = this.orca.api.major > 1 || this.orca.api.minor >= 10;
+    if (!known?.sessionId || !known.workspaceId || !scoped || Date.now() - known.at < 6e4) return true;
+    const rows = await this.listAgents(known.workspaceId);
+    return !rows.length || rows.some((row) => row.sessionId === known.sessionId);
+  }
+  /** Whether the terminal (or chat) still runs; a closed one is gone for good. */
   async terminalAlive(terminalId) {
+    if (isChatHandle(terminalId)) return this.chatAlive(terminalId);
     try {
       const result = await this.runCli(["terminal", "show", "--terminal", terminalId], 15e3);
       return result.terminal.status !== "exited";
@@ -256,8 +350,9 @@ var OrcaAdapter = class {
     if (!this.isIdle(terminalId)) return false;
     return this.send(terminalId, text);
   }
-  /** Types text into an agent's terminal and submits it, wherever the terminal is. */
+  /** Types text into an agent's terminal and submits it, wherever the terminal is; a chat gets it as Orca mail. */
   async send(terminalId, text) {
+    if (isChatHandle(terminalId)) return this.mail(terminalId, text);
     try {
       const result = await this.runCli(["terminal", "send", "--terminal", terminalId, "--text", text, "--enter"], 3e4);
       if (result.send.accepted) this.noteWorking(terminalId);
@@ -272,28 +367,109 @@ var OrcaAdapter = class {
       }
     }
   }
-  /** Starts an agent CLI in a terminal of the workspace at `path`, with an optional model, effort and first prompt. */
+  /** A launch's CLI call, with Orca's refusals as LaunchRefused. */
+  async launchCli(args, timeoutMs) {
+    try {
+      return await this.runCli(args, timeoutMs);
+    } catch (error62) {
+      const message = error62.message;
+      const refused = launchRefusal(message);
+      throw refused ? new LaunchRefused(refused, message) : error62;
+    }
+  }
+  noteLaunched(handle, agent, surface) {
+    this.agents.set(handle, { terminalId: handle, title: null, agent, state: "working", stateStartedAt: Date.now(), workspaceId: null, at: Date.now() });
+    if (surface === "chat") this.goneChats.delete(handle);
+  }
+  /**
+   * Starts an agent in the workspace at `path`, as a chat or in a terminal, with an optional model, effort and first
+   * prompt. Throws LaunchRefused when Orca refuses the surface or the model before starting anything.
+   */
   async launch(input2) {
-    const args = ["agent", "launch", "--agent", input2.agent, "--worktree", `path:${input2.path}`, "--surface", "terminal", "--prompt", input2.prompt];
+    const surface = input2.surface ?? "terminal";
+    const args = ["agent", "launch", "--agent", input2.agent, "--worktree", `path:${input2.path}`, "--surface", surface, "--prompt", input2.prompt];
     if (input2.model) args.push("--model", input2.model);
     if (input2.model && input2.effort) args.push("--effort", input2.effort);
     if (input2.focus) args.push("--focus");
-    const result = await this.runCli(args, 12e4);
+    const result = await this.launchCli(args, 12e4);
     const terminalId = result.outcome?.handle ?? result.agentTerminalHandle;
-    if (!terminalId) throw new Error(`Orca did not start ${input2.agent} in a terminal.`);
-    this.agents.set(terminalId, { terminalId, title: null, agent: input2.agent, state: "working", stateStartedAt: Date.now(), workspaceId: null, at: Date.now() });
-    return { terminalId };
+    if (!terminalId) throw new Error(`Orca did not start ${input2.agent}.`);
+    const ran = result.outcome?.kind === "structured" || isChatHandle(terminalId) ? "chat" : "terminal";
+    this.noteLaunched(terminalId, input2.agent, ran);
+    return { terminalId, surface: ran };
   }
-  /** Creates a worktree workspace in a project and starts the lead in it; returns the lead's terminal. */
+  /** Creates a worktree workspace in a project and starts the lead in it; returns the lead's terminal or chat. */
   async createWorkspace(input2) {
-    const args = ["worktree", "create", "--repo", `path:${input2.projectPath}`, "--name", input2.name, "--agent", input2.agent, "--surface", "terminal", "--prompt", input2.prompt, "--activate"];
+    const args = ["worktree", "create", "--repo", `path:${input2.projectPath}`, "--name", input2.name, "--agent", input2.agent, "--surface", input2.surface ?? "terminal", "--prompt", input2.prompt, "--activate"];
     if (input2.model) args.push("--model", input2.model);
     if (input2.model && input2.effort) args.push("--effort", input2.effort);
     if (input2.baseBranch) args.push("--base-branch", input2.baseBranch);
-    const result = await this.runCli(args, 18e4);
+    const result = await this.launchCli(args, 18e4);
     const terminalId = result.launch?.outcome?.handle ?? result.agentTerminalHandle;
-    if (!terminalId) throw new Error("Orca created the workspace but did not start the lead in a terminal.");
-    return { terminalId, workspaceId: result.worktree.id, path: result.worktree.path };
+    if (!terminalId) throw new Error("Orca created the workspace but did not start the lead.");
+    const ran = result.launch?.outcome?.kind === "structured" || isChatHandle(terminalId) ? "chat" : "terminal";
+    this.noteLaunched(terminalId, input2.agent, ran);
+    return { terminalId, workspaceId: result.worktree.id, path: result.worktree.path, surface: ran };
+  }
+  /** Names an agent's tab: a terminal's title, or a chat's name. */
+  async rename(handle, title) {
+    const args = isChatHandle(handle) ? ["chat", "rename", "--session", chatSessionId(handle), "--name", title] : ["terminal", "rename", "--terminal", handle, "--title", title];
+    await this.runCli(args).catch(() => void 0);
+  }
+  // ----- Mail to chats
+  /** The quiet terminal each workspace's mail to chats is sent from, by workspace path. */
+  senders = /* @__PURE__ */ new Map();
+  /** The terminal mail to chats in the workspace at `path` comes from, made when there is none. */
+  async sender(path) {
+    const known = this.senders.get(path);
+    if (known && await this.terminalAlive(known)) return known;
+    const note = [
+      "Ensemble: this terminal carries team messages to the lead and members that run as chats.",
+      "Keep it open while a team works; closing it is safe, it comes back when needed.",
+      "Ensemble\uFF1A\u8FD9\u4E2A\u7EC8\u7AEF\u7528\u6765\u7ED9\u4EE5\u56FE\u5F62\u754C\u9762\uFF08\u804A\u5929\uFF09\u8FD0\u884C\u7684\u534F\u8C03\u5668\u548C\u6210\u5458\u8F6C\u53D1\u56E2\u961F\u6D88\u606F\u3002\u56E2\u961F\u5DE5\u4F5C\u65F6\u8BF7\u4FDD\u7559\u5B83\uFF1B\u5173\u6389\u4E5F\u6CA1\u5173\u7CFB\uFF0C\u9700\u8981\u65F6\u4F1A\u91CD\u65B0\u6253\u5F00\u3002"
+    ].join("\n");
+    const created = await this.runCli(["terminal", "create", "--worktree", `path:${path}`, "--title", "Ensemble", "--command", `printf '%b
+' '${note.replace(/'/g, "")}'; exec tail -f /dev/null`], 6e4);
+    this.senders.set(path, created.terminal.handle);
+    return created.terminal.handle;
+  }
+  /**
+   * Sends text to a chat as Orca mail: an idle chat gets it as its next message, a busy one when its turn ends. Mail
+   * needs a terminal as its sender: the workspace's Ensemble terminal. A chat that is gone refuses it.
+   */
+  async mail(handle, text) {
+    const home = this.chatHome(handle);
+    if (!home) return false;
+    const subject = (text.replace(/^\[[^\]]*\]\s*/, "").split("\n").find((line) => line.trim()) ?? "Ensemble").trim().slice(0, 80) || "Ensemble";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const from = await this.sender(home);
+      try {
+        await this.runCli(["orchestration", "send", "--from", from, "--to", `orca_session_id:${chatSessionId(handle)}`, "--subject", subject, "--body", text], 3e4);
+        this.noteWorking(handle);
+        return true;
+      } catch (error62) {
+        const code = error62.code ?? "";
+        if (/sender|terminal_not_found|no_active/i.test(code) && attempt === 0) {
+          this.senders.delete(home);
+          continue;
+        }
+        if (/session|not_found|closed/i.test(code)) this.goneChats.add(handle);
+        return false;
+      }
+    }
+    return false;
+  }
+  // ----- Models the host's agents can run
+  piList = null;
+  /** pi's models as `provider/id`, from `pi --list-models` in a login shell (cached for 5 minutes); empty when pi can't be run. */
+  async piModels() {
+    if (this.piList && Date.now() - this.piList.at < 5 * 6e4) return this.piList.models;
+    const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
+    const models = await new Promise((resolve) => {
+      execFile(shell, ["-lc", "pi --list-models"], { timeout: 2e4, maxBuffer: 4 * 1024 * 1024 }, (error62, stdout) => resolve(error62 && !stdout ? [] : parsePiModels(String(stdout))));
+    });
+    this.piList = { at: Date.now(), models };
+    return models;
   }
   async focusTerminal(terminalId) {
     await this.orca.host.call("terminal.focus", { terminalId }).catch(() => this.runCli(["terminal", "switch", "--terminal", terminalId]).catch(() => void 0));
@@ -926,6 +1102,7 @@ var prompt_exports = {};
 __export(prompt_exports, {
   assignmentPrompt: () => assignmentPrompt,
   broadcastPrompt: () => broadcastPrompt,
+  chatNote: () => chatNote,
   delegationTaskPrompt: () => delegationTaskPrompt,
   leadNoticePrompt: () => leadNoticePrompt,
   leadStartPrompt: () => leadStartPrompt,
@@ -20690,7 +20867,8 @@ var optionalText = external_exports.string().trim().optional().transform((value)
 var RuntimeSchema = external_exports.object({
   agent: name,
   model: optionalText,
-  effort: optionalText
+  effort: optionalText,
+  surface: external_exports.enum(SURFACES).optional()
 });
 var RoleSchema = RuntimeSchema.extend({
   name,
@@ -21049,6 +21227,13 @@ function modeChangedPrompt(mode, configured) {
   const now2 = mode ?? configured;
   return `${PLUGIN_MESSAGE_PREFIX} The user set this session's collaboration mode to ${now2}${mode === null ? " (the team's mode)" : ""}. ${MODE_LINE[now2]} Follow it from the next request; a run already in progress keeps its mode.`;
 }
+function chatNote(bin) {
+  return [
+    `${PLUGIN_MESSAGE_PREFIX} You run as an Orca chat, so \`${TEAM_BIN}\` is not on your PATH. Run it by its full path:`,
+    `  '${bin}' status`,
+    `Team messages from the lead or other members arrive as Orca mail (a message from "Ensemble"). Answer with \`${TEAM_BIN}\` tools, such as ${M.report}, not with \`orca orchestration reply\`.`
+  ].join("\n");
+}
 function memberStartPrompt(team, role, work) {
   return `${memberSystemPrompt(team, role)}
 
@@ -21060,6 +21245,7 @@ var prompt_zh_exports = {};
 __export(prompt_zh_exports, {
   assignmentPrompt: () => assignmentPrompt2,
   broadcastPrompt: () => broadcastPrompt2,
+  chatNote: () => chatNote2,
   delegationTaskPrompt: () => delegationTaskPrompt2,
   leadNoticePrompt: () => leadNoticePrompt2,
   leadStartPrompt: () => leadStartPrompt2,
@@ -21337,6 +21523,13 @@ ${task.plan?.text ?? ""}
 function modeChangedPrompt2(mode, configured) {
   const now2 = mode ?? configured;
   return `${PLUGIN_MESSAGE_PREFIX} \u7528\u6237\u628A\u672C\u4F1A\u8BDD\u7684\u534F\u4F5C\u6A21\u5F0F\u8BBE\u4E3A ${now2}${mode === null ? "\uFF08\u56E2\u961F\u914D\u7F6E\u7684\u6A21\u5F0F\uFF09" : ""}\u3002${MODE_LINE2[now2]}\u4ECE\u4E0B\u4E00\u4E2A\u8BF7\u6C42\u5F00\u59CB\u6309\u6B64\u6267\u884C\uFF1B\u5DF2\u5728\u8FDB\u884C\u7684\u8FD0\u884C\u4FDD\u6301\u539F\u6765\u7684\u6A21\u5F0F\u3002`;
+}
+function chatNote2(bin) {
+  return [
+    `${PLUGIN_MESSAGE_PREFIX} \u4F60\u4EE5 Orca \u804A\u5929\uFF08\u56FE\u5F62\u754C\u9762\uFF09\u65B9\u5F0F\u8FD0\u884C\uFF0C\`${TEAM_BIN}\` \u4E0D\u5728\u4F60\u7684 PATH \u91CC\uFF0C\u8BF7\u7528\u5B8C\u6574\u8DEF\u5F84\u8C03\u7528\uFF1A`,
+    `  '${bin}' status`,
+    `\u534F\u8C03\u5668\u548C\u5176\u4ED6\u6210\u5458\u7684\u6D88\u606F\u4F1A\u4EE5 Orca \u90AE\u4EF6\u7684\u5F62\u5F0F\u9001\u8FBE\uFF08\u53D1\u4EF6\u4EBA\u662F\u300CEnsemble\u300D\uFF09\u3002\u8BF7\u7528 \`${TEAM_BIN}\` \u7684\u5DE5\u5177\u56DE\u590D\uFF0C\u4F8B\u5982 ${M2.report}\uFF0C\u4E0D\u8981\u7528 \`orca orchestration reply\`\u3002`
+  ].join("\n");
 }
 function memberStartPrompt2(team, role, work) {
   return `${memberSystemPrompt2(team, role)}
@@ -21876,10 +22069,15 @@ var adapterRef = null;
 var orca = () => adapterRef;
 var store = null;
 var readTeamRef = async (lead) => ({ team: lead.team, source: "the session's copy" });
-function initCollaboration(adapter, runs, readTeam) {
+function initCollaboration(adapter, runs, readTeam, teamBin = "agent-team") {
   adapterRef = adapter;
   store = runs;
   readTeamRef = readTeam;
+  adapter.teamBin = teamBin;
+  adapter.chatHome = (handle) => {
+    const member = store.member(handle);
+    return store.lead(handle)?.path ?? (member ? store.lead(member.leadTerminalId)?.path : null) ?? null;
+  };
 }
 async function leadContext(caller) {
   await store.load();
@@ -21908,11 +22106,12 @@ function roleSpec(ctx, name2) {
   const fixed = ctx.team.roles.find((role) => key(role.name) === key(name2));
   if (fixed) return { ...fixed, formed: false };
   const formed = ctx.sessionRoles.find((role) => key(role.name) === key(name2));
-  if (formed) return { name: formed.name, agent: formed.agent, model: formed.model, effort: formed.effort, folders: formed.folders, instructions: formed.instructions, formed: true };
+  const candidateOf = ctx.team.candidates.find((entry) => key(entry.name) === key(formed?.candidate ?? ""));
+  if (formed) return { name: formed.name, agent: formed.agent, model: formed.model, effort: formed.effort, ...candidateOf?.surface ? { surface: candidateOf.surface } : {}, folders: formed.folders, instructions: formed.instructions, formed: true };
   const candidate = ctx.team.candidates.find((entry) => key(entry.name) === key(name2));
-  if (candidate) return { name: candidate.name, agent: candidate.agent, model: candidate.model, effort: candidate.effort, folders: [], instructions: candidate.notes, formed: true };
+  if (candidate) return { name: candidate.name, agent: candidate.agent, model: candidate.model, effort: candidate.effort, ...candidate.surface ? { surface: candidate.surface } : {}, folders: [], instructions: candidate.notes, formed: true };
   if (key(name2) === HELPER && !ctx.team.candidates.length) {
-    return { name: HELPER, agent: ctx.team.lead.agent, model: ctx.team.lead.model, effort: ctx.team.lead.effort, folders: [], instructions: "Helps the lead with work no role owns.", formed: false };
+    return { name: HELPER, agent: ctx.team.lead.agent, model: ctx.team.lead.model, effort: ctx.team.lead.effort, ...ctx.team.lead.surface ? { surface: ctx.team.lead.surface } : {}, folders: [], instructions: "Helps the lead with work no role owns.", formed: false };
   }
   return null;
 }
@@ -21967,21 +22166,42 @@ async function dispatch(ctx, leadId, spec, prompt, lang) {
     const sent = await orca().send(existing, prompt);
     if (!sent) throw new Error(lang === "zh" ? `\u65E0\u6CD5\u628A\u4EFB\u52A1\u4EA4\u7ED9 ${spec.name}\u3002` : `Could not hand the task to ${spec.name}.`);
     seenWorking.delete(existing);
-    return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true };
+    return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true, surface: store.member(existing)?.surface ?? "terminal", note: null };
   }
   const P = promptsFor(lang);
   const title = memberTitle(spec.name);
   const launchId = newLaunchId();
   const systemPrompt = P.memberSystemPrompt(ctx.team, spec);
-  const member = { leadTerminalId: leadId, role: spec.name, agent: spec.agent, model: spec.model, effort: spec.effort, title };
-  await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, createdAt: now() });
-  const first = `[ensemble:${launchId}]
+  const wanted = surfaceOf(spec);
+  const model = spec.model && spec.agent === "pi" ? await resolveModel(spec.model) : spec.model;
+  const member = { leadTerminalId: leadId, role: spec.name, agent: spec.agent, model: spec.model, effort: spec.effort, surface: wanted, title };
+  await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, model, effort: spec.effort, createdAt: now() });
+  const forTerminal = `[ensemble:${launchId}]
 ${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
-  const { terminalId } = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model: spec.model, effort: spec.effort, prompt: first });
-  if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, createdAt: now() });
-  void orca().runCli(["terminal", "rename", "--terminal", terminalId, "--title", title]).catch(() => void 0);
+  const forChat = `${P.chatNote(orca().teamBin)}
+
+${P.memberStartPrompt(ctx.team, spec, prompt)}`;
+  let notes = [];
+  let started;
+  try {
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted });
+  } catch (error62) {
+    if (!(error62 instanceof LaunchRefused) || wanted !== "chat") throw error62;
+    notes = [lang === "zh" ? `${spec.name}\uFF1AOrca \u8FD9\u4E2A\u7248\u672C\u4E0D\u80FD\u4EE5\u56FE\u5F62\u754C\u9762\u6253\u5F00 ${spec.agent}\uFF0C\u6539\u7528\u547D\u4EE4\u884C\uFF08\u7EC8\u7AEF\uFF09\u3002` : `${spec.name}: this Orca cannot open ${spec.agent} as a chat here; started it in a terminal instead.`];
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal" });
+  }
+  const { terminalId } = started;
+  const ran = started.surface;
+  if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
+  void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
-  return { agentId: terminalId, title, continued: false };
+  return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
+}
+async function resolveModel(model) {
+  const choice = resolvePiModel(model, await orca().piModels());
+  if (choice.ok) return choice.model;
+  const hint = choice.matches.length ? ` (${choice.error === "ambiguous" ? "one of" : "near"}: ${choice.matches.join(", ")})` : "";
+  throw new Error(`pi has no model "${model}"${hint}. Put a provider/id model in the team, such as ${choice.matches[0] ?? "provider/id"}.`);
 }
 async function sendIfIdle(id, text) {
   const member = store.member(id);
@@ -22610,6 +22830,7 @@ ${task}` : task), lang);
           run = await store.mutate(run.id, (current) => mirrorTask(upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task }, now()), spec.name, started.agentId, started.title, task));
           run = await store.log(run.id, [contextEvent(started.agentId, spec, started.continued)]);
           lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
+          if (started.note) lines.push(`  ${started.note}`);
         } catch (error62) {
           lines.push(`- ${spec.name}: ${tr("not started", "\u672A\u542F\u52A8")}: ${error62 instanceof Error ? error62.message : String(error62)}`);
         }
@@ -22726,6 +22947,7 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
             const started = await dispatch(ctx, agent.id, spec, P.teamKickoffPrompt(run, full, roster, spec, headerFor(spec, lang)), lang);
             run = await store.mutate(run.id, (current) => upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()));
             lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
+            if (started.note) lines.push(`  ${started.note}`);
           } catch (error62) {
             lines.push(`- ${spec.name}: ${tr("not started", "\u672A\u542F\u52A8")}: ${error62 instanceof Error ? error62.message : String(error62)}`);
           }
@@ -23299,7 +23521,7 @@ var shown = /* @__PURE__ */ new Set();
 async function handleShim(request) {
   await store.load();
   const terminalId = request.terminalId;
-  if (!terminalId) return { isError: true, text: "agent-team runs only inside an Orca terminal (ORCA_TERMINAL_HANDLE is not set)." };
+  if (!terminalId) return { isError: true, text: "agent-team runs only inside Orca, in a terminal or a chat: neither ORCA_TERMINAL_HANDLE nor ORCA_AGENT_SESSION_ID is set." };
   orca().learnProfile(request.userDataPath);
   if (request.command.trim().toLowerCase() === "check-team") {
     const given = String(request.input?.file ?? request.input?.text ?? "").trim();
@@ -23609,6 +23831,18 @@ function createApi(deps) {
       pluginReady: { cli: adapter.cliPath !== null, problems: deps.problems() }
     };
   }
+  async function startLead(input2) {
+    const lead = input2.team.lead;
+    const wanted = surfaceOf(lead);
+    const model = lead.model && lead.agent === "pi" ? await resolveModel(lead.model) : lead.model;
+    const prompt = input2.prompt;
+    try {
+      return await adapter.launch({ path: input2.path, agent: lead.agent, model, effort: lead.effort, prompt, focus: true, surface: wanted });
+    } catch (error62) {
+      if (!(error62 instanceof LaunchRefused) || wanted !== "chat") throw error62;
+      return adapter.launch({ path: input2.path, agent: lead.agent, model, effort: lead.effort, prompt, focus: true, surface: "terminal" });
+    }
+  }
   async function start(input2) {
     const settings = await deps.settings();
     const picked = await resolveTeam(input2.team);
@@ -23622,12 +23856,21 @@ function createApi(deps) {
     const sourceLabel = source.kind === "file" ? source.file : source.kind === "preset" ? `the preset "${teamTitle(team)}"` : "the team chosen at start";
     const prompt = P.leadStartPrompt(team, sourceLabel, input2.request);
     const systemPrompt = P.orchestratorPrompt(team, sourceLabel);
-    const marked = `[ensemble:${launchId}]
+    const chatMarked = `${promptsFor(language).chatNote(adapter.teamBin)}
+
 ${prompt}`;
     const base = { projectId: null, projectName: "", source, team, language, mode: override, locked: null, roles: [], brief: null };
+    const wanted = surfaceOf(team.lead);
+    const model = team.lead.model && team.lead.agent === "pi" ? await resolveModel(team.lead.model) : team.lead.model;
+    const marked = wanted === "chat" ? chatMarked : `[ensemble:${launchId}]
+${prompt}`;
     if (input2.newWorkspace && input2.projectPath) {
       await store2.addLaunch({ id: launchId, kind: "lead", prompt, systemPrompt, lead: { ...base, workspaceId: null, path: "" }, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
-      const made = await adapter.createWorkspace({ projectPath: input2.projectPath, name: input2.newWorkspace.name, baseBranch: input2.newWorkspace.baseBranch, agent: team.lead.agent, model: team.lead.model, effort: team.lead.effort, prompt: marked });
+      const made = await adapter.createWorkspace({ projectPath: input2.projectPath, name: input2.newWorkspace.name, baseBranch: input2.newWorkspace.baseBranch, agent: team.lead.agent, model, effort: team.lead.effort, prompt: marked, surface: wanted }).catch(async (error62) => {
+        if (!(error62 instanceof LaunchRefused) || wanted !== "chat") throw error62;
+        return adapter.createWorkspace({ projectPath: input2.projectPath, name: input2.newWorkspace.name, baseBranch: input2.newWorkspace.baseBranch, agent: team.lead.agent, model, effort: team.lead.effort, prompt: `[ensemble:${launchId}]
+${prompt}`, surface: "terminal" });
+      });
       await store2.updateIndex((index) => {
         const lead = index.leads[made.terminalId];
         index.leads[made.terminalId] = { ...lead ?? { ...base, terminalId: made.terminalId, agentSessionId: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), endedAt: null }, workspaceId: lead?.workspaceId ?? made.workspaceId, path: made.path, projectName: input2.projectPath.split("/").pop() ?? "" };
@@ -23637,7 +23880,7 @@ ${prompt}`;
     const path = input2.workspacePath ?? input2.projectPath;
     if (!path) throw new Error("Pick a workspace or a project.");
     await store2.addLaunch({ id: launchId, kind: "lead", prompt, systemPrompt, lead: { ...base, workspaceId: null, path }, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
-    const { terminalId } = await adapter.launch({ path, agent: team.lead.agent, model: team.lead.model, effort: team.lead.effort, prompt: marked, focus: true });
+    const { terminalId } = await startLead({ path, team, prompt: marked });
     await store2.updateIndex((index) => {
       const lead = index.leads[terminalId];
       index.leads[terminalId] = { ...lead ?? { ...base, terminalId, workspaceId: null, agentSessionId: null, createdAt: (/* @__PURE__ */ new Date()).toISOString(), endedAt: null }, path, projectName: path.split("/").pop() ?? "" };
@@ -23768,7 +24011,10 @@ ${prompt}`, focus: false });
       await advance(runId);
       return { ok: true };
     },
-    catalog: async () => ({ agents: [...KNOWN_AGENTS], models: MODEL_SUGGESTIONS, efforts: [...EFFORTS] }),
+    catalog: async () => {
+      const pi = await adapter.piModels().catch(() => []);
+      return { agents: [...KNOWN_AGENTS], models: pi.length ? { ...MODEL_SUGGESTIONS, pi } : MODEL_SUGGESTIONS, efforts: [...EFFORTS] };
+    },
     validateTeam: async ({ team }) => {
       const checked = checkTeam(team);
       return checked.ok ? { ok: true, team: checked.team } : { ok: false, errors: checked.errors };
@@ -23905,9 +24151,11 @@ async function onAgentLaunch(deps, event) {
   let prompt = word;
   let systemPrompt = "";
   const marker = word.match(LAUNCH_MARKER);
+  let cliArgs = [];
   if (marker) {
     const launch = deps.store.takeLaunch(marker[1]);
     prompt = word.replace(LAUNCH_MARKER, "");
+    cliArgs = cliModelArgs(event.agent, launch?.model, launch?.effort) ?? [];
     if (launch) {
       systemPrompt = launch.systemPrompt;
       if (launch.kind === "member" && launch.member) await deps.store.setMember({ terminalId: event.terminalId, ...launch.member, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
@@ -23931,7 +24179,8 @@ ${PLUGIN_MESSAGE_PREFIX} ${made.note}` : "");
     }
   }
   const next = [...words];
-  next[promptIndex] = prompt;
+  next.splice(promptIndex, 0, ...cliArgs);
+  next[promptIndex + cliArgs.length] = prompt;
   if (systemPrompt && event.agent === "claude" && !next.includes("--append-system-prompt")) next.splice(promptIndex, 0, "--append-system-prompt", systemPrompt);
   return { ...event, env, command: next.map((entry, index) => index === 0 && /^[A-Za-z0-9._/-]+$/.test(entry) ? entry : shellQuote(entry)).join(" ") };
 }
@@ -23966,7 +24215,7 @@ async function activate(orca2) {
   const adapter = new OrcaAdapter(orca2);
   const store2 = new Store(dataDir(pluginRoot));
   await store2.load();
-  initCollaboration(adapter, store2, (lead) => teamOfLead(orca2, lead));
+  initCollaboration(adapter, store2, (lead) => teamOfLead(orca2, lead), join9(pluginRoot, "bin", "agent-team"));
   const problems = [];
   if (!adapter.cliPath) problems.push("The orca CLI was not found beside Orca, so members can't be started or messaged in the background.");
   const settings = async () => {
@@ -24008,12 +24257,13 @@ async function activate(orca2) {
   }
   void updateStatusBar();
   orca2.events.on("agent.status.changed", (payload) => {
+    const terminalId = OrcaAdapter.handleOf(payload) ?? void 0;
     if (process.env.AGENT_TEAM_DEBUG || debugStatus) {
-      const role = store2.lead(payload.terminalId) ? "lead" : store2.member(payload.terminalId)?.title ?? "-";
-      orca2.log(`status ${role} ${payload.terminalId?.slice(5, 13)} ${payload.state} main=${payload.mainAgent?.state ?? "-"}/${payload.mainAgent?.outcome ?? "-"}`);
+      const role = store2.lead(terminalId) ? "lead" : store2.member(terminalId)?.title ?? "-";
+      orca2.log(`status ${role} ${terminalId?.slice(5, 13)} ${payload.state} main=${payload.mainAgent?.state ?? "-"}/${payload.mainAgent?.outcome ?? "-"}`);
     }
-    adapter.noteStatus(payload);
-    void onAgentStatus(payload).catch((error62) => orca2.log(`status: ${String(error62)}`));
+    adapter.noteStatus({ ...payload, terminalId });
+    void onAgentStatus({ ...payload, terminalId }).catch((error62) => orca2.log(`status: ${String(error62)}`));
   });
   orca2.events.on("workspace.removed", (payload) => {
     void (async () => {

@@ -1,10 +1,12 @@
 // Inputs the team editor is built from: a combobox with suggestions, a runtime editor (agent, model, effort), folder
 // chips, an auto-growing textarea, and the per-field problem messages.
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { CHAT_OFFERED, surfaceOf, type Surface } from "../../shared/agents";
 import type { PromptLanguage } from "../../shared/modes";
 import { EFFORTS, KNOWN_AGENTS, MODEL_SUGGESTIONS } from "../../shared/team";
 import { t } from "../i18n";
-import { Icon } from "../kit";
+import { Icon, Segmented } from "../kit";
+import { call } from "../orca";
 import type { RuntimeDraft } from "./draft";
 import type { Issue } from "./validate";
 
@@ -146,9 +148,25 @@ export function Combo({ value, onChange, suggestions, placeholder, invalid, labe
   );
 }
 
-/** The agent CLI, model and effort an agent runs on. */
+/** Model suggestions per agent: the built-in ones, and the models the host's agents list (pi's `provider/id` models). */
+let hostModels: Promise<Record<string, string[]>> | null = null;
+function useModelSuggestions(agent: string): string[] {
+  const [models, setModels] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    hostModels ??= call("catalog").then((catalog) => catalog.models ?? {}, () => ({}));
+    let live = true;
+    void hostModels.then((found) => live && setModels(found));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const name = agent.trim();
+  return models[name]?.length ? models[name]! : MODEL_SUGGESTIONS[name] ?? [];
+}
+
+/** The agent CLI, model and effort an agent runs on, and for an agent Orca can open as a chat, chat or terminal. */
 export function RuntimeEditor({ runtime, field, onChange }: { runtime: RuntimeDraft; field: string; onChange(runtime: RuntimeDraft, group: string): void }) {
-  const models = MODEL_SUGGESTIONS[runtime.agent.trim()] ?? [];
+  const models = useModelSuggestions(runtime.agent);
   const agentIssues = useIssues(`${field}.agent`);
   const effort = runtime.effort ?? "";
   const efforts: string[] = effort && !(EFFORTS as readonly string[]).includes(effort) ? [...EFFORTS, effort] : [...EFFORTS];
@@ -163,6 +181,19 @@ export function RuntimeEditor({ runtime, field, onChange }: { runtime: RuntimeDr
       <Slot field={`${field}.effort`} label={t("editor.runtime.effort")}>
         <Select value={effort} label={t("editor.runtime.effort")} onChange={(value) => onChange({ ...runtime, effort: value || undefined }, `${field}.effort`)} options={[{ value: "", label: t("editor.runtime.effortDefault") }, ...efforts.map((item) => ({ value: item, label: item }))]} />
       </Slot>
+      {CHAT_OFFERED.has(runtime.agent.trim()) ? (
+        <div className="te-surface" data-field={`${field}.surface`}>
+          <span className="te-surface-label">{t("editor.runtime.surface")}</span>
+          <Segmented<Surface>
+            value={surfaceOf(runtime)}
+            options={[
+              { value: "chat", label: t("editor.runtime.chat"), title: t("editor.runtime.chatHint") },
+              { value: "terminal", label: t("editor.runtime.terminal"), title: t("editor.runtime.terminalHint") },
+            ]}
+            onChange={(surface) => onChange({ ...runtime, surface }, `${field}.surface`)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

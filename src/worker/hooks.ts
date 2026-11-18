@@ -2,6 +2,7 @@
 // real prompt and, for Claude, its standing instructions as an appended system prompt; and a new agent whose first
 // prompt starts with `@team` becomes a team's lead, which is how a native "new session" turns into a team session.
 import { join } from "node:path";
+import { cliModelArgs } from "../shared/agents";
 import { isTeamMode, languageFromLocale, PLUGIN_MESSAGE_PREFIX, type TeamMode } from "../shared/modes";
 import { ENV } from "../shared/paths";
 import { promptsFor } from "../shared/prompts";
@@ -135,9 +136,13 @@ export async function onAgentLaunch(deps: HookDeps, event: { agent: string; work
   let prompt = word;
   let systemPrompt = "";
   const marker = word.match(LAUNCH_MARKER);
+  let cliArgs: string[] = [];
   if (marker) {
     const launch = deps.store.takeLaunch(marker[1]!);
     prompt = word.replace(LAUNCH_MARKER, "");
+    // Orca passes most agents their model; for one whose CLI flags are known (pi), the model goes on its command line
+    // here when a launch couldn't take it there.
+    cliArgs = cliModelArgs(event.agent, launch?.model, launch?.effort) ?? [];
     if (launch) {
       systemPrompt = launch.systemPrompt;
       if (launch.kind === "member" && launch.member) await deps.store.setMember({ terminalId: event.terminalId, ...launch.member, createdAt: new Date().toISOString() });
@@ -159,7 +164,8 @@ export async function onAgentLaunch(deps: HookDeps, event: { agent: string; work
     }
   }
   const next = [...words];
-  next[promptIndex] = prompt;
+  next.splice(promptIndex, 0, ...cliArgs);
+  next[promptIndex + cliArgs.length] = prompt;
   if (systemPrompt && event.agent === "claude" && !next.includes("--append-system-prompt")) next.splice(promptIndex, 0, "--append-system-prompt", systemPrompt);
   return { ...event, env, command: next.map((entry, index) => (index === 0 && /^[A-Za-z0-9._/-]+$/.test(entry) ? entry : shellQuote(entry))).join(" ") };
 }

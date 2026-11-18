@@ -5,6 +5,16 @@ var import_node_fs = require("node:fs");
 var import_node_net = require("node:net");
 var import_node_path = require("node:path");
 
+// src/shared/agents.ts
+var CHAT_AGENTS = /* @__PURE__ */ new Set(["claude", "codex", "grok", "cursor", "kimi", "copilot"]);
+var CHAT_OFFERED = /* @__PURE__ */ new Set([...CHAT_AGENTS, "pi", "opencode"]);
+var CHAT_HANDLE_PREFIX = "structured-agent-session-";
+function callerHandle(env) {
+  if (env.ORCA_TERMINAL_HANDLE) return env.ORCA_TERMINAL_HANDLE;
+  if (env.ORCA_AGENT_SESSION_ID) return `${CHAT_HANDLE_PREFIX}${env.ORCA_AGENT_SESSION_ID}`;
+  return null;
+}
+
 // src/shared/paths.ts
 var import_node_crypto = require("node:crypto");
 function rootKey(pluginRoot2) {
@@ -59,7 +69,8 @@ async function main() {
   const request = {
     command,
     input,
-    terminalId: process.env.ORCA_TERMINAL_HANDLE ?? null,
+    // A terminal's handle, or the chat whose shell runs this (ORCA_AGENT_SESSION_ID names it).
+    terminalId: callerHandle(process.env),
     workspaceId: process.env.ORCA_WORKSPACE_ID ?? process.env.ORCA_WORKTREE_ID ?? null,
     userDataPath: process.env.ORCA_USER_DATA_PATH ?? null,
     cwd: process.cwd()

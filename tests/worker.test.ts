@@ -23,17 +23,18 @@ const worker: OrcaWorker = {
 
 /** Orca without Orca: launches become terminal ids, sends are recorded, every agent is alive. */
 class FakeOrca extends OrcaAdapter {
-  launched: { terminalId: string; agent: string; model?: string; prompt: string }[] = [];
+  launched: { terminalId: string; agent: string; model?: string; prompt: string; surface: string }[] = [];
   sent: { terminalId: string; text: string }[] = [];
   private next = 1;
   constructor() {
     super(worker);
   }
-  override async launch(input: { path: string; agent: string; model?: string; effort?: string; prompt: string }) {
+  override async launch(input: { path: string; agent: string; model?: string; effort?: string; prompt: string; surface?: "chat" | "terminal" }) {
     const terminalId = `term_m${this.next++}`;
-    this.launched.push({ terminalId, agent: input.agent, model: input.model, prompt: input.prompt });
+    const surface = input.surface ?? "terminal";
+    this.launched.push({ terminalId, agent: input.agent, model: input.model, prompt: input.prompt, surface });
     this.agents.set(terminalId, { terminalId, title: null, agent: input.agent, state: "working", stateStartedAt: Date.now(), workspaceId: "w", at: Date.now() });
-    return { terminalId };
+    return { terminalId, surface };
   }
   override async send(terminalId: string, text: string) {
     this.sent.push({ terminalId, text });
@@ -52,6 +53,9 @@ class FakeOrca extends OrcaAdapter {
   override async runCli<T>(): Promise<T> {
     return {} as T;
   }
+  override async piModels() {
+    return ["fluxcode-国模/deepseek-v4.1-flash", "fluxcode-国模/qwen-max"];
+  }
   idle(terminalId: string) {
     const row = this.agents.get(terminalId)!;
     this.agents.set(terminalId, { ...row, state: "done", at: Date.now() });
@@ -63,10 +67,10 @@ const team = (mode: Team["mode"]): Team => {
     version: 1,
     name: "notes",
     mode,
-    lead: { agent: "claude", model: "haiku" },
+    lead: { agent: "claude", model: "haiku", surface: "terminal" },
     roles: [
-      { name: "writer", agent: "claude", model: "haiku", folders: ["notes"], instructions: "Writes notes." },
-      { name: "checker", agent: "codex", model: "gpt-5.5", folders: ["checks"], instructions: "Writes checks." },
+      { name: "writer", agent: "claude", model: "haiku", folders: ["notes"], instructions: "Writes notes.", surface: "terminal" },
+      { name: "checker", agent: "codex", model: "gpt-5.5", folders: ["checks"], instructions: "Writes checks.", surface: "terminal" },
     ],
   });
   if (!checked.ok) throw new Error(checked.errors.join("\n"));
@@ -102,7 +106,7 @@ beforeEach(async () => {
   fake = new FakeOrca();
   store = new Store(join(root, ".data"));
   await store.load();
-  initCollaboration(fake, store, async (session) => ({ team: session.team, source: "the test team" }));
+  initCollaboration(fake, store, async (session) => ({ team: session.team, source: "the test team" }), "/plugins/ensemble/bin/agent-team");
 });
 
 describe("agent-team for terminals outside a team", () => {
@@ -141,6 +145,29 @@ describe("delegation through agent-team", () => {
     expect(waited.text).toContain("Wrote checks/a.check");
     const flow = store.get(run.id)!.events.map((event) => `${event.component}:${event.action}`);
     expect(flow).toEqual(expect.arrayContaining(["split:split", "split:assign", "contexts:start", "reports:report", "reports:collect"]));
+  });
+
+  it("starts a member whose team asks for a chat as a chat, without the launch marker", async () => {
+    const chatted = checkTeam({
+      version: 1,
+      name: "chat",
+      mode: "delegation",
+      lead: { agent: "claude", model: "haiku", surface: "terminal" },
+      roles: [{ name: "writer", agent: "pi", model: "qwen-max", surface: "chat", folders: ["notes"], instructions: "Writes notes." }],
+    });
+    if (!chatted.ok) throw new Error(chatted.errors.join("\n"));
+    await store.setLead({ ...lead("delegation"), team: chatted.team });
+    const delegated = await shim("lead1", "delegate", { tasks: [{ role: "writer", task: "Write notes/a.txt" }], title: "Docs" });
+    expect(delegated.isError).toBe(false);
+    const launch = fake.launched[0]!;
+    expect(launch.surface).toBe("chat");
+    // Orca gets the provider/id model; the bare team model was completed from the host's list.
+    expect(launch.model).toBe("fluxcode-国模/qwen-max");
+    expect(LAUNCH_MARKER.test(launch.prompt)).toBe(false);
+    expect(launch.prompt).toContain("'/plugins/ensemble/bin/agent-team' status");
+    expect(delegated.text).toContain("(writer, pi/qwen-max): started");
+    expect(store.member(launch.terminalId)?.surface).toBe("chat");
+    expect(launch.prompt).toContain("Write notes/a.txt");
   });
 
   it("refuses delegation in a session set to none, and locks an auto session to its first run's mode", async () => {
@@ -230,6 +257,12 @@ describe("the launch hook", () => {
     const event = await onAgentLaunch(deps(), { agent: "claude", workspaceId: "p::/repo", terminalId: "t9", command: `claude '--model' 'haiku' '[ensemble:L0000ABCD]\nthe task'`, env: {} });
     expect(shellWords(event.command)).toEqual(["claude", "--model", "haiku", "--append-system-prompt", "You are writer", "the task"]);
     expect(store.member("t9")?.role).toBe("writer");
+  });
+
+  it("adds pi's own model flags when the launch could not carry the model", async () => {
+    await store.addLaunch({ id: "L0000BBBB", kind: "member", prompt: "the task", systemPrompt: "", member: { leadTerminalId: "lead1", role: "worker", agent: "pi", title: "worker#1" }, model: "fluxcode-国模/deepseek-v4.1-flash", effort: "high", createdAt: new Date().toISOString() });
+    const event = await onAgentLaunch(deps(), { agent: "pi", workspaceId: "p::/repo", terminalId: "t7", command: `pi '[ensemble:L0000BBBB]\nthe task'`, env: {} });
+    expect(shellWords(event.command)).toEqual(["pi", "--model", "fluxcode-国模/deepseek-v4.1-flash", "--thinking", "high", "the task"]);
   });
 
   it("turns a new agent whose first prompt starts with @team into a lead", async () => {

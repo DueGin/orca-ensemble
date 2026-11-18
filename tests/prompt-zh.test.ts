@@ -92,6 +92,7 @@ function cases(): Array<[string, string, string]> {
     both("modeChangedPrompt (override)", (m) => m.modeChangedPrompt, "team", "auto"),
     both("modeChangedPrompt (team's mode)", (m) => m.modeChangedPrompt, null, "delegation"),
     both("memberStartPrompt", (m) => m.memberStartPrompt, team, role, "First work."),
+    both("chatNote", (m) => m.chatNote, "/plugins/ensemble/bin/agent-team"),
   ];
 }
 

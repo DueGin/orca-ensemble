@@ -18,7 +18,8 @@ import type { ShimRequest, ShimResponse } from "../shared/ipc";
 import { parseTeam, runtimeLabel, type Team } from "../shared/team";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import type { OrcaAdapter } from "./adapter";
+import { resolvePiModel, surfaceOf, type Surface } from "../shared/agents";
+import { LaunchRefused, type OrcaAdapter } from "./adapter";
 import { asActor, newLaunchId, type LeadSession, type SessionRole, type Store } from "./store";
 import { claudeTranscript, claudeTurn, lastReplyFromScreen, typedAfter } from "./transcripts";
 
@@ -63,10 +64,16 @@ let store: Store = null as unknown as Store;
 /** Reads a team for a lead: its team file again (edits apply), a preset, or the copy taken when the session started. */
 let readTeamRef: (lead: LeadSession) => Promise<{ team: Team; source: string }> = async (lead) => ({ team: lead.team, source: "the session's copy" });
 
-export function initCollaboration(adapter: OrcaAdapter, runs: Store, readTeam: typeof readTeamRef): void {
+export function initCollaboration(adapter: OrcaAdapter, runs: Store, readTeam: typeof readTeamRef, teamBin = "agent-team"): void {
   adapterRef = adapter;
   store = runs;
   readTeamRef = readTeam;
+  adapter.teamBin = teamBin;
+  // Mail to a chat leaves from the team's workspace: the lead's path, else its member's.
+  adapter.chatHome = (handle) => {
+    const member = store.member(handle);
+    return store.lead(handle)?.path ?? (member ? store.lead(member.leadTerminalId)?.path : null) ?? null;
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -111,6 +118,8 @@ interface MemberSpec extends RoleNote {
   agent: string;
   model?: string;
   effort?: string;
+  /** Chat (Orca's graphical client) or terminal; unset is a chat when the agent can be one. */
+  surface?: Surface;
   formed: boolean;
 }
 
@@ -125,12 +134,13 @@ function roleSpec(ctx: LeadContext, name: string): MemberSpec | null {
   const fixed = ctx.team.roles.find((role) => key(role.name) === key(name));
   if (fixed) return { ...fixed, formed: false };
   const formed = ctx.sessionRoles.find((role) => key(role.name) === key(name));
-  if (formed) return { name: formed.name, agent: formed.agent, model: formed.model, effort: formed.effort, folders: formed.folders, instructions: formed.instructions, formed: true };
+  const candidateOf = ctx.team.candidates.find((entry) => key(entry.name) === key(formed?.candidate ?? ""));
+  if (formed) return { name: formed.name, agent: formed.agent, model: formed.model, effort: formed.effort, ...(candidateOf?.surface ? { surface: candidateOf.surface } : {}), folders: formed.folders, instructions: formed.instructions, formed: true };
   // Work can go straight to a candidate: its member runs on the candidate's model, with its description as notes.
   const candidate = ctx.team.candidates.find((entry) => key(entry.name) === key(name));
-  if (candidate) return { name: candidate.name, agent: candidate.agent, model: candidate.model, effort: candidate.effort, folders: [], instructions: candidate.notes, formed: true };
+  if (candidate) return { name: candidate.name, agent: candidate.agent, model: candidate.model, effort: candidate.effort, ...(candidate.surface ? { surface: candidate.surface } : {}), folders: [], instructions: candidate.notes, formed: true };
   if (key(name) === HELPER && !ctx.team.candidates.length) {
-    return { name: HELPER, agent: ctx.team.lead.agent, model: ctx.team.lead.model, effort: ctx.team.lead.effort, folders: [], instructions: "Helps the lead with work no role owns.", formed: false };
+    return { name: HELPER, agent: ctx.team.lead.agent, model: ctx.team.lead.model, effort: ctx.team.lead.effort, ...(ctx.team.lead.surface ? { surface: ctx.team.lead.surface } : {}), folders: [], instructions: "Helps the lead with work no role owns.", formed: false };
   }
   return null;
 }
@@ -199,30 +209,56 @@ async function reusableMember(leadId: string, spec: MemberSpec): Promise<string 
   return busy ? "busy" : null;
 }
 
-/** Continues the role's idle member with the prompt, or starts one in a new terminal of the lead's workspace. */
-async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prompt: string, lang: PromptLanguage): Promise<{ agentId: string; title: string; continued: boolean }> {
+/**
+ * Continues the role's idle member with the prompt, or starts one in the lead's workspace, as a chat or in a terminal.
+ * Orca's own launch takes the model; where it refuses one for an agent (pi before 1.4.261), the agent is started in a
+ * terminal and the launch hook adds the CLI's own model flags, after resolving the model against the agent's list.
+ */
+async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prompt: string, lang: PromptLanguage): Promise<{ agentId: string; title: string; continued: boolean; surface: Surface; note: string | null }> {
   const existing = await reusableMember(leadId, spec);
   if (existing === "busy") throw new Error(lang === "zh" ? `${spec.name} 正忙于其他工作；请等它完成，或把工作交给别的角色。` : `${spec.name} is busy with other work; wait for it to finish, or give the work to another role.`);
   if (existing) {
     const sent = await orca().send(existing, prompt);
     if (!sent) throw new Error(lang === "zh" ? `无法把任务交给 ${spec.name}。` : `Could not hand the task to ${spec.name}.`);
     seenWorking.delete(existing);
-    return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true };
+    return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true, surface: store.member(existing)?.surface ?? "terminal", note: null };
   }
   const P = promptsFor(lang);
   const title = memberTitle(spec.name);
   const launchId = newLaunchId();
   const systemPrompt = P.memberSystemPrompt(ctx.team, spec);
-  const member = { leadTerminalId: leadId, role: spec.name, agent: spec.agent, model: spec.model, effort: spec.effort, title };
-  await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, createdAt: now() });
+  const wanted = surfaceOf(spec);
+  const model = spec.model && spec.agent === "pi" ? await resolveModel(spec.model) : spec.model;
+  const member = { leadTerminalId: leadId, role: spec.name, agent: spec.agent, model: spec.model, effort: spec.effort, surface: wanted, title };
+  await store.addLaunch({ id: launchId, kind: "member", prompt, systemPrompt, member, model, effort: spec.effort, createdAt: now() });
   // The marker lets the launch hook tie this launch to its terminal; agents without a system prompt get the
-  // standing instructions in their first message.
-  const first = `[ensemble:${launchId}]\n${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
-  const { terminalId } = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model: spec.model, effort: spec.effort, prompt: first });
-  if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, createdAt: now() });
-  void orca().runCli(["terminal", "rename", "--terminal", terminalId, "--title", title]).catch(() => undefined);
+  // standing instructions in their first message. A chat has no launch hook: it gets the instructions and the command's
+  // full path in its first message, and no marker.
+  const forTerminal = `[ensemble:${launchId}]\n${spec.agent === "claude" ? prompt : P.memberStartPrompt(ctx.team, spec, prompt)}`;
+  const forChat = `${P.chatNote(orca().teamBin)}\n\n${P.memberStartPrompt(ctx.team, spec, prompt)}`;
+  let notes: string[] = [];
+  let started: { terminalId: string; surface: Surface };
+  try {
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted });
+  } catch (error) {
+    if (!(error instanceof LaunchRefused) || wanted !== "chat") throw error;
+    notes = [lang === "zh" ? `${spec.name}：Orca 这个版本不能以图形界面打开 ${spec.agent}，改用命令行（终端）。` : `${spec.name}: this Orca cannot open ${spec.agent} as a chat here; started it in a terminal instead.`];
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal" });
+  }
+  const { terminalId } = started;
+  const ran = started.surface;
+  if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
+  void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
-  return { agentId: terminalId, title, continued: false };
+  return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
+}
+
+/** A pi model as Orca passes it: a bare id one provider lists is completed to that provider; near matches name the choices. */
+export async function resolveModel(model: string): Promise<string> {
+  const choice = resolvePiModel(model, await orca().piModels());
+  if (choice.ok) return choice.model;
+  const hint = choice.matches.length ? ` (${choice.error === "ambiguous" ? "one of" : "near"}: ${choice.matches.join(", ")})` : "";
+  throw new Error(`pi has no model "${model}"${hint}. Put a provider/id model in the team, such as ${choice.matches[0] ?? "provider/id"}.`);
 }
 
 /** Sends to an idle agent only, so a message never interrupts a turn; returns whether it went in. */
@@ -959,6 +995,7 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
           run = await store.mutate(run.id, (current) => mirrorTask(upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task }, now()), spec.name, started.agentId, started.title, task));
           run = await store.log(run.id, [contextEvent(started.agentId, spec, started.continued)]);
           lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "沿用已有成员") : tr("started", "已启动")}`);
+          if (started.note) lines.push(`  ${started.note}`);
         } catch (error) {
           lines.push(`- ${spec.name}: ${tr("not started", "未启动")}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -1080,6 +1117,7 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
             const started = await dispatch(ctx, agent.id, spec, P.teamKickoffPrompt(run, full, roster, spec, headerFor(spec, lang)), lang);
             run = await store.mutate(run.id, (current) => upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()));
             lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "沿用已有成员") : tr("started", "已启动")}`);
+            if (started.note) lines.push(`  ${started.note}`);
           } catch (error) {
             lines.push(`- ${spec.name}: ${tr("not started", "未启动")}: ${error instanceof Error ? error.message : String(error)}`);
           }
@@ -1668,7 +1706,7 @@ const shown = new Set<string>();
 export async function handleShim(request: ShimRequest): Promise<ShimResponse> {
   await store.load();
   const terminalId = request.terminalId;
-  if (!terminalId) return { isError: true, text: "agent-team runs only inside an Orca terminal (ORCA_TERMINAL_HANDLE is not set)." };
+  if (!terminalId) return { isError: true, text: "agent-team runs only inside Orca, in a terminal or a chat: neither ORCA_TERMINAL_HANDLE nor ORCA_AGENT_SESSION_ID is set." };
   orca().learnProfile(request.userDataPath);
   // Any Orca terminal (the planner, a person) may check a team file.
   if (request.command.trim().toLowerCase() === "check-team") {

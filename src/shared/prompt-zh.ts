@@ -111,7 +111,7 @@ function teamRules(): string[] {
 export function orchestratorPrompt(team: Team, source: string): string {
   const notes = team.roles.filter((role) => role.instructions.trim()).map((role) => `- ${role.name}: ${role.instructions.trim()}`);
   return [
-    "你是 Orca 中一个智能体团队的协调器（lead）。用户和你对话；团队成员为你工作，每个成员在你工作区中自己的 Orca 终端里运行。",
+    "你是 Orca 中一个智能体团队的协调者（lead）。用户和你对话；团队成员为你工作，每个成员是你工作区里独立运行的智能体：按团队设置以聊天（Orca 的图形界面）或终端方式运行。",
     LANGUAGE_RULE,
     team.goal.trim() ? `团队目标：${team.goal.trim()}` : "",
     `团队来自 ${source}。`,
@@ -315,6 +315,18 @@ export function planWaitingPrompt(run: Run, task: BoardTask): string {
 export function modeChangedPrompt(mode: TeamMode | null, configured: TeamMode): string {
   const now = mode ?? configured;
   return `${PLUGIN_MESSAGE_PREFIX} 用户把本会话的协作模式设为 ${now}${mode === null ? "（团队配置的模式）" : ""}。${MODE_LINE[now]}从下一个请求开始按此执行；已在进行的运行保持原来的模式。`;
+}
+
+/**
+ * What a chat needs and a terminal gets from its launch hook: the `agent-team` command is not on a chat's PATH, so it is
+ * called by its full path, and the team's messages arrive as Orca mail (answer them with agent-team, not Orca's reply).
+ */
+export function chatNote(bin: string): string {
+  return [
+    `${PLUGIN_MESSAGE_PREFIX} 你以 Orca 聊天（图形界面）方式运行，\`${TEAM_BIN}\` 不在你的 PATH 里，请用完整路径调用：`,
+    `  '${bin}' status`,
+    `协调器和其他成员的消息会以 Orca 邮件的形式送达（发件人是「Ensemble」）。请用 \`${TEAM_BIN}\` 的工具回复，例如 ${M.report}，不要用 \`orca orchestration reply\`。`,
+  ].join("\n");
 }
 
 /** A member's first message: who it is, then its first piece of work. */

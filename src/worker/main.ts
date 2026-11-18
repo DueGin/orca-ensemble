@@ -33,7 +33,7 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
   const adapter = new OrcaAdapter(orca);
   const store = new Store(dataDir(pluginRoot));
   await store.load();
-  initCollaboration(adapter, store, (lead) => teamOfLead(orca, lead));
+  initCollaboration(adapter, store, (lead) => teamOfLead(orca, lead), join(pluginRoot, "bin", "agent-team"));
   const problems: string[] = [];
   if (!adapter.cliPath) problems.push("The orca CLI was not found beside Orca, so members can't be started or messaged in the background.");
 
@@ -86,12 +86,14 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
 
   // ----- Agent status
   orca.events.on("agent.status.changed", (payload) => {
+    // A chat's status carries no terminal id: its pane key names the chat.
+    const terminalId = OrcaAdapter.handleOf(payload) ?? undefined;
     if (process.env.AGENT_TEAM_DEBUG || debugStatus) {
-      const role = store.lead(payload.terminalId) ? "lead" : store.member(payload.terminalId)?.title ?? "-";
-      orca.log(`status ${role} ${payload.terminalId?.slice(5, 13)} ${payload.state} main=${payload.mainAgent?.state ?? "-"}/${payload.mainAgent?.outcome ?? "-"}`);
+      const role = store.lead(terminalId) ? "lead" : store.member(terminalId)?.title ?? "-";
+      orca.log(`status ${role} ${terminalId?.slice(5, 13)} ${payload.state} main=${payload.mainAgent?.state ?? "-"}/${payload.mainAgent?.outcome ?? "-"}`);
     }
-    adapter.noteStatus(payload);
-    void onAgentStatus(payload).catch((error) => orca.log(`status: ${String(error)}`));
+    adapter.noteStatus({ ...payload, terminalId });
+    void onAgentStatus({ ...payload, terminalId }).catch((error) => orca.log(`status: ${String(error)}`));
   });
   orca.events.on("workspace.removed", (payload: { workspaceId: string; path: string }) => {
     void (async () => {

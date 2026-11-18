@@ -1,6 +1,7 @@
 // The editor's draft of a team file: what the user is editing, which may be invalid for a while (an empty role name,
 // two roles with one name). Decoding never throws, so a broken file still opens; encoding writes the draft as the same
 // pretty JSON `serializeTeam` writes, keeping fields the editor doesn't know.
+import { SURFACES, type Surface } from "../../shared/agents";
 import { isPromptLanguage, isTeamMode, type PromptLanguage, type TeamMode } from "../../shared/modes";
 import { candidateHandle, TeamSchema } from "../../shared/team";
 
@@ -8,6 +9,8 @@ export interface RuntimeDraft {
   agent: string;
   model?: string;
   effort?: string;
+  /** Chat (Orca's graphical client) or terminal; unset is a chat when the agent can be one. */
+  surface?: Surface;
 }
 
 export interface RoleDraft extends RuntimeDraft {
@@ -52,8 +55,15 @@ const optional = (value: unknown, lost: string[], path: string): string | undefi
   return undefined;
 };
 
+function surfaceOfRaw(value: unknown, lost: string[], path: string): Surface | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if ((SURFACES as readonly unknown[]).includes(value)) return value as Surface;
+  lost.push(path);
+  return undefined;
+}
+
 function runtimeOf(raw: Obj, lost: string[], path: string): RuntimeDraft {
-  return { agent: text(raw.agent, lost, `${path}.agent`), model: optional(raw.model, lost, `${path}.model`), effort: optional(raw.effort, lost, `${path}.effort`) };
+  return { agent: text(raw.agent, lost, `${path}.agent`), model: optional(raw.model, lost, `${path}.model`), effort: optional(raw.effort, lost, `${path}.effort`), surface: surfaceOfRaw(raw.surface, lost, `${path}.surface`) };
 }
 
 function listOf(value: unknown, lost: string[], path: string): unknown[] {

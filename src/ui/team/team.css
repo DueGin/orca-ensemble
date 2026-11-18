@@ -151,6 +151,8 @@
 .te-select-wrap { position: relative; min-width: 0; }
 .te-select-wrap > svg { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted-fg); pointer-events: none; }
 .te-runtime { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(92px, .8fr); gap: 8px; }
+.te-surface { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.te-surface-label { font-size: 12px; font-weight: 600; color: var(--muted-fg); }
 .te-link { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 650; cursor: pointer; padding: 0; }
 .te-link:hover { text-decoration: underline; }
 

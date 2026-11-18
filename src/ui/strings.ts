@@ -78,7 +78,12 @@ export const STRINGS = {
     "model": "Model",
     "modelDefault": "Agent default",
     "effort": "Effort",
-    "effortDefault": "Default"
+    "effortDefault": "Default",
+    "surface": "Opens as",
+    "chat": "Chat (GUI)",
+    "terminal": "Terminal (CLI)",
+    "chatHint": "Orca's own chat client. Falls back to a terminal where Orca can't open this agent as a chat.",
+    "terminalHint": "The agent's command line in an Orca terminal"
    },
    "role": {
     "name": "Role name",
@@ -117,6 +122,7 @@ export const STRINGS = {
     "candidateIsRole": "A role is already named “{{name}}”; give this candidate another handle.",
     "empty": "A team needs at least one role or one candidate.",
     "noInstructions": "No instructions: the lead knows only the role's name.",
+    "piModel": "pi takes a provider/id model, such as fluxcode/{{model}} (see `pi --list-models`). At start, a model only one provider has is completed for you.",
     "modeNone": "The mode is None: the lead works alone, so roles and candidates aren't used."
    },
    "where": {
@@ -681,7 +687,12 @@ export const STRINGS = {
     "model": "模型",
     "modelDefault": "智能体默认",
     "effort": "推理强度",
-    "effortDefault": "默认"
+    "effortDefault": "默认",
+    "surface": "打开方式",
+    "chat": "图形界面",
+    "terminal": "命令行",
+    "chatHint": "用 Orca 自带的聊天客户端打开；Orca 无法以聊天方式打开这个智能体时改用终端。",
+    "terminalHint": "在 Orca 终端里运行这个智能体的命令行"
    },
    "role": {
     "name": "角色名称",
@@ -720,6 +731,7 @@ export const STRINGS = {
     "candidateIsRole": "已有角色叫「{{name}}」，请给这个候选成员换个代号。",
     "empty": "团队至少需要一个角色或一个候选成员。",
     "noInstructions": "没有说明：协调器只知道这个角色的名字。",
+    "piModel": "pi 的模型要写成 provider/id，例如 fluxcode/{{model}}（见 `pi --list-models`）。启动时，只有一个 provider 提供的模型会自动补全。",
     "modeNone": "模式为「无」：协调器独自完成，角色和候选成员都不会用到。"
    },
    "where": {

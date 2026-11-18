@@ -51,6 +51,13 @@ export function checkDraft(team: TeamDraft): Check {
   team.roles.forEach((role, index) => {
     if (!role.instructions.trim()) issues.push({ field: `roles.${index}.instructions`, level: "warning", message: t("editor.v.noInstructions") });
   });
+  // Orca passes pi only a provider/id model; a bare id is completed at start when one provider has it.
+  const piModel = (runtime: { agent: string; model?: string }, field: string) => {
+    if (runtime.agent.trim() === "pi" && runtime.model?.trim() && !runtime.model.includes("/")) issues.push({ field: `${field}.model`, level: "warning", message: t("editor.v.piModel", { model: runtime.model.trim() }) });
+  };
+  piModel(team.lead, "lead");
+  team.roles.forEach((role, index) => piModel(role, `roles.${index}`));
+  team.candidates.forEach((candidate, index) => piModel(candidate, `candidates.${index}`));
   if (team.mode === "none" && (team.roles.length || team.candidates.length)) issues.push({ field: "mode", level: "warning", message: t("editor.v.modeNone") });
   const errors = issues.filter((issue) => issue.level === "error").length;
   return { issues, errors, warnings: issues.length - errors, team: result.success ? result.data : null };
