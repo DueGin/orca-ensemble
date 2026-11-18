@@ -63,11 +63,13 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
 
 Orca plugins can't give agents new tools, so the plugin puts a command, `agent-team`, on the PATH of every agent Orca starts (an `agent.launch.before` hook). The lead runs `agent-team status`, `agent-team delegate '<json>'`, `agent-team brief`, `agent-team kickoff`, `agent-team wait`, …; members run `agent-team read`, `task`, `post`, `claim`, `report`. Each call goes over a Unix socket to the plugin's worker, which knows the caller by its Orca terminal (`ORCA_TERMINAL_HANDLE`). `agent-team help [command]` lists the commands and their JSON fields.
 
-- Members start with `orca agent launch` (terminal surface, the role's model and effort) in the lead's checkout; the launch hook ties each launch to its terminal and gives Claude its standing instructions as an appended system prompt (other agents get them in their first message).
+- Members start with `orca agent launch` (a chat or a terminal, the role's model and effort) in the lead's checkout; the launch hook ties each launch to its terminal and gives Claude its standing instructions as an appended system prompt (other agents get them in their first message).
 - Messages to idle agents are typed with `orca terminal send`, never into an agent mid-turn. Messages to a busy agent arrive in the output of its next `agent-team` command.
 - Turn ends come from Orca's agent status and, for Claude, its session transcript (`stop_reason: end_turn`), so an agent's idle status while it starts up is not taken for a finished turn.
 - Team mode's intake can't be skipped: `agent-team kickoff` needs your own words confirming the brief, found in the lead's transcript or on its screen after the brief was recorded, or your **Confirm** in the panel.
 - State lives in `~/.orca-ensemble/<plugin>/` (sessions and runs). Team files live in the project, `.agents/teams/*.team.json`, shared through git. A run report opens on a small link file in `.agents/runs/`, which the plugin keeps out of git.
+
+On an Orca with `orca orchestration`, members are supervised by Orca's own orchestration: each team run is one Orca Run, each member is attached to it as a worker (`orchestration worker-start --terminal`, keeping its chat or terminal and its model), a chat member's messages go to its dispatch with `orchestration send`, and a member's turn ends when its dispatch settles (`worker_done`), which also wakes the lead. That is what lets a chat member, which has no terminal to type into, be reached during a run. On an older Orca the plugin dispatches and reads its members itself, as above.
 
 ### Requirements
 
@@ -181,11 +183,13 @@ Versions: each release is a git tag `vX.Y.Z`, the version in `orca-plugin.json` 
 
 Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 钩子把一个命令 `agent-team` 放进 Orca 启动的每个 agent 的 PATH。协调器运行 `agent-team status`、`agent-team delegate '<json>'`、`brief`、`kickoff`、`wait`……，成员运行 `read`、`task`、`post`、`claim`、`report`。每次调用经 Unix socket 发给插件的 worker，worker 按调用者所在的 Orca 终端（`ORCA_TERMINAL_HANDLE`）识别身份。`agent-team help [命令]` 列出命令和 JSON 字段。
 
-- 成员用 `orca agent launch`（终端模式、角色的模型和推理强度）启动在协调器的检出目录里；启动钩子把每次启动和它的终端对应起来，并以追加系统提示的方式给 Claude 常驻指令（其他 agent 在第一条消息里收到）。
+- 成员用 `orca agent launch`（图形界面或终端、角色的模型和推理强度）启动在协调器的检出目录里；启动钩子把每次启动和它的终端对应起来，并以追加系统提示的方式给 Claude 常驻指令（其他 agent 在第一条消息里收到）。
 - 给空闲 agent 的消息用 `orca terminal send` 输入，绝不打断进行中的回合；给忙碌 agent 的消息会附在它下一次 `agent-team` 命令的输出里。
 - 回合结束依据 Orca 的 agent 状态，Claude 还会读取它的会话记录（`stop_reason: end_turn`），不会把启动时的空闲状态误当成完成。
 - 团队模式的需求对接不能跳过：`agent-team kickoff` 需要你在简报之后亲口确认的原话（从协调器的会话记录或屏幕里核对），或你在面板里按**确认**。
 - 状态保存在 `~/.orca-ensemble/<plugin>/`。团队文件保存在项目里的 `.agents/teams/*.team.json`，通过 git 共享。运行报告打开的是 `.agents/runs/` 下的小链接文件，插件会把它排除在 git 之外。
+
+在支持 `orca orchestration` 的 Orca 上，成员由 Orca 自己的编排监管：每次团队运行对应一个 Orca Run，每个成员用 `orchestration worker-start --terminal` 作为工作单元挂到这个 Run 上（保留它的图形界面或终端，以及它的模型）；给图形界面成员的消息用 `orchestration send` 发到它的派发（dispatch）；派发结束（`worker_done`）即成员的回合结束，Orca 同时唤醒协调器。正因如此，没有终端可输入的图形界面成员在运行中也能收到消息。旧版 Orca 上，仍由插件自己派发和读取成员，方式如上。
 
 ### 要求
 

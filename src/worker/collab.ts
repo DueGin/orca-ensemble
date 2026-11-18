@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { resolvePiModel, surfaceOf, type Surface } from "../shared/agents";
 import { LaunchRefused, type OrcaAdapter } from "./adapter";
+import { detectOrchestration, Orchestra, resetOrchestrationSupport } from "./orchestra";
 import { asActor, newLaunchId, type LeadSession, type SessionRole, type Store } from "./store";
 import { claudeTranscript, claudeTurn, lastReplyFromScreen, typedAfter } from "./transcripts";
 
@@ -64,10 +65,17 @@ let store: Store = null as unknown as Store;
 /** Reads a team for a lead: its team file again (edits apply), a preset, or the copy taken when the session started. */
 let readTeamRef: (lead: LeadSession) => Promise<{ team: Team; source: string }> = async (lead) => ({ team: lead.team, source: "the session's copy" });
 
+/** Orca's own orchestration: one Run per team run, every member a supervised dispatch of it. */
+let orchestra: Orchestra | null = null;
+
 export function initCollaboration(adapter: OrcaAdapter, runs: Store, readTeam: typeof readTeamRef, teamBin = "agent-team"): void {
   adapterRef = adapter;
   store = runs;
   readTeamRef = readTeam;
+  orchestra = new Orchestra(adapter, (leadId) => store.lead(leadId)?.terminalId ?? null);
+  // A probe belongs to the Orca it asked: a second init (another Orca, or a test) asks again.
+  resetOrchestrationSupport();
+  void detectOrchestration(adapter).then((on) => adapter.orca.log(`[ensemble] Orca orchestration ${on ? "on: members ride Orca's Runs" : "not available: members are dispatched by the plugin"}`)).catch(() => undefined);
   adapter.teamBin = teamBin;
   // Mail to a chat leaves from the team's workspace: the lead's path, else its member's.
   adapter.chatHome = (handle) => {
@@ -218,7 +226,9 @@ async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prom
   const existing = await reusableMember(leadId, spec);
   if (existing === "busy") throw new Error(lang === "zh" ? `${spec.name} 正忙于其他工作；请等它完成，或把工作交给别的角色。` : `${spec.name} is busy with other work; wait for it to finish, or give the work to another role.`);
   if (existing) {
-    const sent = await orca().send(existing, prompt);
+    // Through sendMember, so a reused member's dispatch stops speaking for its next turn: a typed new task leaves the
+    // old dispatch settled, and reading it would finish the member before it started.
+    const sent = await sendMember(existing, prompt);
     if (!sent) throw new Error(lang === "zh" ? `无法把任务交给 ${spec.name}。` : `Could not hand the task to ${spec.name}.`);
     seenWorking.delete(existing);
     return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true, surface: store.member(existing)?.surface ?? "terminal", note: null };
@@ -250,6 +260,26 @@ async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prom
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
   void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
+  // Orca's orchestration supervises the member from here: its dispatch says when the member's turn ended (see
+  // onAgentStatus), and a chat member's messages ride Orca's mail. Messages to a terminal member stay the plugin's own
+  // typed ones: a send to its dispatch would reach it as a new task (see sendMember). Without orchestration the plugin
+  // dispatches and reads the member itself.
+  const teamRun = store.leadRun(leadId, true);
+  if (orchestra?.enabled() && teamRun) {
+    const orcaRun = teamRun.orcaRunId ?? (await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`));
+    if (orcaRun) {
+      // The spec is the role, not the task: Orca queues it as another turn, and the task itself is already in the
+      // launch prompt. The member record exists before this, so its first team tool call finds its run.
+      const dispatch = await orchestra.startWorker({ runId: orcaRun, leadId, handle: terminalId, title, spec: specBrief(spec), workspacePath: ctx.lead.path });
+      const current = store.member(terminalId);
+      if (dispatch) {
+        if (current) await store.setMember({ ...current, dispatchId: dispatch.dispatchId, orcaRunId: orcaRun });
+        if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current) => ({ ...current, orcaRunId: orcaRun }));
+      } else {
+        notes.push(lang === "zh" ? `${spec.name}：Orca 编排没有接管这个成员，插件自己派发。` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`);
+      }
+    }
+  }
   return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
 }
 
@@ -261,10 +291,50 @@ export async function resolveModel(model: string): Promise<string> {
   throw new Error(`pi has no model "${model}"${hint}. Put a provider/id model in the team, such as ${choice.matches[0] ?? "provider/id"}.`);
 }
 
+/** A worker's task for Orca: what it is, and that the team's own tools carry its work and its report. */
+function specBrief(spec: MemberSpec): string {
+  return [spec.instructions.trim(), spec.folders.length ? `Folders: ${spec.folders.join(", ")}` : "", `Work through the agent-team command (${TEAM_BIN} report <json>) and report with worker_done.`].filter(Boolean).join("\n\n").slice(0, 20_000);
+}
+
+/**
+ * Sends to a member, never interrupting a turn.
+ *
+ * A chat member goes through Orca's dispatch when it has one: mail reaches a chat at its turn's end, and the dispatch
+ * is what Orca wakes it from. A terminal member keeps the plugin's own typed message (idle check, then `send`) even
+ * when it has a dispatch. The premise a fallback here would rest on — that a terminal worker only gets a "run
+ * orchestration check" notice and never executes the message — does not hold: verified against Orca 1.4,
+ * `orchestration send --to dispatch:<id>` to a terminal worker makes a *follow-up* dispatch whose body Orca injects into
+ * the agent as a fresh `=== TASK ===` turn, which the worker executes (subject and `--type` are dropped, and each send
+ * burns a new task). That is right for a task, not for the messages the plugin sends mid-run (board mentions, verdicts,
+ * wake-ups), which a running member reads in its next tool result anyway. Its dispatch still reports the member's end of
+ * turn (see onAgentStatus).
+ *
+ * Without Orca's orchestration (an older Orca) every member takes the plugin's path.
+ */
+async function sendMember(id: string, text: string, leadId?: string): Promise<boolean> {
+  const member = store.member(id);
+  const lead = member ? store.lead(member.leadTerminalId) : undefined;
+  if (orchestra?.governs(member) && member.leadTerminalId && member.surface === "chat") {
+    const sent = await orchestra.send(member.dispatchId, member.leadTerminalId, "Ensemble", text);
+    if (sent) {
+      noteAgentWorking(id);
+      // A follow-up dispatch is the one that now ends this member's turn; keep the earlier one for reference only.
+      if (sent.dispatchId !== member.dispatchId) await store.setMember({ ...member, dispatchId: sent.dispatchId });
+      return true;
+    }
+  }
+  const workspaceId = lead?.workspaceId ?? null;
+  if (!(await isIdleAgent(id, workspaceId))) return false;
+  const typed = await orca().send(id, text);
+  // Typed into the agent by the plugin: its dispatch speaks of an earlier turn from now on.
+  if (typed && orchestra?.holds(member)) Orchestra.sent(member.dispatchId);
+  return typed;
+}
+
 /** Sends to an idle agent only, so a message never interrupts a turn; returns whether it went in. */
 async function sendIfIdle(id: string, text: string): Promise<boolean> {
-  const member = store.member(id);
-  const workspaceId = store.lead(member?.leadTerminalId ?? id)?.workspaceId ?? null;
+  if (store.member(id)) return sendMember(id, text);
+  const workspaceId = store.lead(id)?.workspaceId ?? null;
   if (!(await isIdleAgent(id, workspaceId))) return false;
   return orca().send(id, text);
 }
@@ -527,13 +597,26 @@ async function moveAlong(runId: string, depth: number): Promise<void> {
  * turn that really was shorter is caught up by reconcile.
  */
 const DISPATCH_MARGIN_MS = 3000;
-function finishIfCurrent(runId: string, seen: RunMember, endedAt: number, outcome: "completed" | "failed" | "canceled", message: string | null): Promise<Run> {
-  return store.mutate(runId, (current) => {
+/**
+ * Finishes a member's current turn. When it did finish and Orca's orchestration holds a dispatch for it, that dispatch
+ * is abandoned: the plugin ended the turn from the member's own report, so Orca would otherwise keep the worker open and
+ * escalate "stopped without reporting" to the lead. Abandoning fences the dispatch and leaves the agent running, ready
+ * for the next task.
+ */
+async function finishIfCurrent(runId: string, seen: RunMember, endedAt: number, outcome: "completed" | "failed" | "canceled", message: string | null): Promise<Run> {
+  const after = await store.mutate(runId, (current) => {
     const member = memberOf(current, seen.agentId);
     if (!member || (member.state !== "working" && member.state !== "attention") || member.dispatchedAt !== seen.dispatchedAt) return current;
     if (Date.parse(member.dispatchedAt) > endedAt - DISPATCH_MARGIN_MS) return current;
     return finishMember(current, seen.agentId, outcome, message, now());
   });
+  const session = store.member(seen.agentId);
+  const finished = memberOf(after, seen.agentId)?.state !== "working" && memberOf(after, seen.agentId)?.state !== "attention";
+  if (finished && orchestra?.holds(session)) {
+    await orchestra.abandon(session.dispatchId).catch(() => undefined);
+    await store.setMember({ ...session, dispatchId: undefined });
+  }
+  return after;
 }
 
 /** Catches up members whose lifecycle events were missed, for example while the plugin reloaded. */
@@ -544,6 +627,49 @@ async function reconcile(runId: string): Promise<void> {
   if (workingMembers(run).length) await refreshAgents(workspaceId);
   for (const member of workingMembers(run)) {
     if (Date.now() - Date.parse(member.dispatchedAt) < 30_000) continue;
+    // Orca's orchestration supervises the member: the dispatch's state is the answer, not the agent's screen — as long
+    // as its dispatch still speaks of the work it is on (the plugin types work into terminal members itself).
+    const session = store.member(member.agentId);
+    if (orchestra?.governs(session) && session.dispatchId) {
+      const dispatch = await orchestra.show(session.dispatchId);
+      if (dispatch) {
+        const settled = Orchestra.settled(dispatch);
+        if (settled.settled) {
+          const message = reports.get(member.agentId) ?? (await lastMessage(member.agentId));
+          reports.delete(member.agentId);
+          await finishIfCurrent(runId, member, Date.now(), outcomeOf(dispatch), message);
+          continue;
+        }
+        // A dispatch only settles through worker_done or a stop: a member that reports with its own tool, ends a
+        // wake-up turn, or loses its agent leaves it open. The agent is then the better witness.
+        const gone = /exit|unverifi/i.test(dispatch.liveness ?? "");
+        const stale = Date.now() - Date.parse(member.dispatchedAt) > 600_000;
+        if (gone || stale) {
+          if (!(await agentAlive(member.agentId, workspaceId))) {
+            await finishIfCurrent(runId, member, Date.now(), "failed", "(the member's agent stopped or its terminal was closed)");
+            continue;
+          }
+          const state = orca().stateOf(member.agentId);
+          const turn = await memberTurnEnded(member.agentId, member);
+          const ended = state === "done" || state === "waiting" ? turn.ended || stale : turn.ended;
+          if (ended) {
+            const message = reports.get(member.agentId) ?? turn.text ?? (await lastMessage(member.agentId));
+            reports.delete(member.agentId);
+            await finishIfCurrent(runId, member, Date.now(), "completed", message);
+            continue;
+          }
+        }
+        // Orca's own "waiting on a human" is attention; a plain wait for input is not.
+        const waiting = /attention|blocked|waitingOnHuman|permission/i.test(dispatch.activity ?? "");
+        await store.mutate(runId, (current) => {
+          const live = memberOf(current, member.agentId);
+          if (!live || (live.state !== "working" && live.state !== "attention")) return current;
+          const next = waiting ? "attention" : "working";
+          return live.state === next ? current : updateMember(current, member.agentId, { state: next }, now());
+        });
+        continue;
+      }
+    }
     if (!(await agentAlive(member.agentId, workspaceId))) {
       await finishIfCurrent(runId, member, Date.now(), "failed", "(the member's agent stopped or its terminal was closed)");
       continue;
@@ -566,6 +692,11 @@ async function reconcile(runId: string): Promise<void> {
   await advance(runId);
 }
 
+/** What a member's finished turn comes to, from Orca's dispatch when that says it, else from the agent's own status. */
+function outcomeOf(dispatch: { state: string } | null, mainAgent?: { outcome?: string }): "completed" | "failed" | "canceled" {
+  return dispatch ? Orchestra.settled(dispatch).outcome : mainAgent?.outcome === "failure" ? "failed" : mainAgent?.outcome === "cancellation" || mainAgent?.outcome === "interruption" ? "canceled" : "completed";
+}
+
 /** An agent's status changed: a member's turn ended or it needs attention; a lead's turn ended. */
 export async function onAgentStatus(payload: { terminalId?: string; state: string; sessionId?: string; mainAgent?: { outcome?: string } }): Promise<void> {
   const terminalId = payload.terminalId;
@@ -580,13 +711,35 @@ export async function onAgentStatus(payload: { terminalId?: string; state: strin
     if (payload.state === "blocked" && member.state === "working") await store.mutate(run.id, (current) => updateMember(current, terminalId, { state: "attention" }, now()));
     if (payload.state === "working" && member.state === "attention") await store.mutate(run.id, (current) => updateMember(current, terminalId, { state: "working" }, now()));
     if (payload.state === "done" && (member.state === "working" || member.state === "attention")) {
-      const turn = await memberTurnEnded(terminalId, member);
-      if (turn.ended) {
-        const outcome = payload.mainAgent?.outcome === "failure" ? "failed" : payload.mainAgent?.outcome === "cancellation" || payload.mainAgent?.outcome === "interruption" ? "canceled" : "completed";
-        const message = reports.get(terminalId) ?? turn.text ?? (await lastMessage(terminalId));
-        reports.delete(terminalId);
-        await finishIfCurrent(run.id, member, Date.now(), outcome, message);
-        await advance(run.id);
+      // Orca's orchestration supervises the member: its dispatch is what says the work is over and how it ended, and
+      // the agent's screen is only a heuristic next to it. A dispatch that can't be read leaves the plugin's reading.
+      const session = store.member(terminalId);
+      let dispatch: Awaited<ReturnType<Orchestra["show"]>> = null;
+      if (orchestra?.governs(session)) dispatch = await orchestra.show(session.dispatchId);
+      if (dispatch) {
+        // Settled: Orca knows the turn is over. Open: the agent went idle without a worker_done (it reported through
+        // its own tool, or the turn was a wake-up), which is not proof of anything by itself — the sweep decides, and
+        // finishes the member once its agent is idle.
+        if (Orchestra.settled(dispatch).settled) {
+          const message = reports.get(terminalId) ?? (await lastMessage(terminalId));
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), outcomeOf(dispatch, payload.mainAgent), message);
+          await advance(run.id);
+        } else if (reports.has(terminalId)) {
+          // The member's own report is in: that is its result, whatever Orca's dispatch says.
+          const message = reports.get(terminalId)!;
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), "completed", message);
+          await advance(run.id);
+        }
+      } else {
+        const turn = await memberTurnEnded(terminalId, member);
+        if (turn.ended) {
+          const message = reports.get(terminalId) ?? turn.text ?? (await lastMessage(terminalId));
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), outcomeOf(null, payload.mainAgent), message);
+          await advance(run.id);
+        }
       }
     }
   }
@@ -1406,17 +1559,28 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
         return { ...noted, status: "closed", claims: [], updatedAt: now() };
       });
       let archived = 0;
+      let stopped = 0;
       if (archiveMembers) {
         for (const member of run.members) {
+          // Orca's orchestration stops the member's worker first, so its dispatch is fenced and nothing else reaches
+          // the agent. It closes only a terminal Orca started itself; the plugin's close below covers the rest. A stop
+          // that fails is the plugin's to log, never the lead's to hear about.
+          const session = store.member(member.agentId);
+          if (orchestra?.holds(session)) {
+            const result = await orchestra.stop(session.dispatchId);
+            if (result.ok) stopped += 1;
+            else orca().orca.log(`[ensemble] run ${run.id}: Orca did not stop the worker of ${member.title} (${session.dispatchId}): ${result.error ?? result.state}`);
+          }
           if (!(await isIdleAgent(member.agentId, store.lead(agent.id)?.workspaceId ?? null))) continue;
           await orca().closeTerminal(member.agentId).then(() => { archived += 1; }, () => undefined);
         }
       }
       const open = run.tasks.filter((task) => task.state === "todo" || task.state === "doing");
       const ids = open.map((task) => task.id).join(", ");
+      const stoppedNote = (zh ? `已停止 ${stopped} 个成员的 Orca 工作单元。` : ` Stopped ${stopped} member worker${stopped === 1 ? "" : "s"} in Orca.`);
       return ok(zh
-        ? `已结束运行 ${run.id}「${run.title}」。${archiveMembers ? `已关闭 ${archived} 个成员的终端。` : ""}${open.length ? `还有 ${open.length} 个任务未完成：${ids}。` : ""}`
-        : `Closed run ${run.id} "${run.title}".${archiveMembers ? ` Closed ${archived} member terminal${archived === 1 ? "" : "s"}.` : ""}${open.length ? ` ${open.length} task${open.length === 1 ? " was" : "s were"} still open: ${ids}.` : ""}`);
+        ? `已结束运行 ${run.id}「${run.title}」。${archiveMembers ? `已关闭 ${archived} 个成员的终端。${stopped ? stoppedNote : ""}` : ""}${open.length ? `还有 ${open.length} 个任务未完成：${ids}。` : ""}`
+        : `Closed run ${run.id} "${run.title}".${archiveMembers ? ` Closed ${archived} member terminal${archived === 1 ? "" : "s"}.${stopped ? stoppedNote : ""}` : ""}${open.length ? ` ${open.length} task${open.length === 1 ? " was" : "s were"} still open: ${ids}.` : ""}`);
     },
   });
 

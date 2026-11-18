@@ -155,6 +155,8 @@ export interface Run {
   createdAt: string;
   updatedAt: string;
   status: "active" | "closed";
+  /** The Orca Run this team run rides on (Orca's orchestration), when it has one. */
+  orcaRunId?: string | null;
   /** Team: the round in progress. Delegation: the batch of tasks in progress. */
   round: number;
   /** Team: rounds to run before the lead integrates. Delegation: always equal to `round`. */

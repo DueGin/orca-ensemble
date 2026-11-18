@@ -234,6 +234,18 @@ var OrcaAdapter = class _OrcaAdapter {
       });
     });
   }
+  /**
+   * Runs `orca <args>` and resolves with its output when the command succeeds, without expecting JSON: for capability
+   * probes such as `orchestration worker-start --help`, which prints help text and exits 0.
+   */
+  rawCli(args, timeoutMs = 6e4) {
+    const cli = this.cli;
+    if (!cli) return Promise.reject(new Error("The orca CLI was not found next to Orca."));
+    const env = { HOME: homedir2(), PATH: `${dirname(cli)}:/usr/bin:/bin:/usr/sbin:/sbin`, TMPDIR: process.env.TMPDIR ?? "/tmp", ORCA_USER_DATA_PATH: this.profile ?? defaultProfile() };
+    return new Promise((resolve, reject) => {
+      execFile("/bin/bash", [cli, ...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error62, stdout) => error62 ? reject(error62) : resolve(String(stdout)));
+    });
+  }
   // ----- Agents and terminals
   /** The terminal or chat a status event is about: chats come with a pane key only. */
   static handleOf(payload) {
@@ -21056,7 +21068,7 @@ function teamRules() {
 function orchestratorPrompt(team, source) {
   const notes = team.roles.filter((role) => role.instructions.trim()).map((role) => `- ${role.name}: ${role.instructions.trim()}`);
   return [
-    "You are the lead of an agent team in Orca. The user talks to you; the team's members work for you, each in its own Orca terminal in your workspace.",
+    "You are the lead of an agent team in Orca. The user talks to you; the team's members work for you, each in its own agent in your workspace: a chat (Orca's graphical client) or a terminal, as the team says.",
     team.goal.trim() ? `Team goal: ${team.goal.trim()}` : "",
     `The team comes from ${source}.`,
     "",
@@ -21348,7 +21360,7 @@ function teamRules2() {
 function orchestratorPrompt2(team, source) {
   const notes = team.roles.filter((role) => role.instructions.trim()).map((role) => `- ${role.name}: ${role.instructions.trim()}`);
   return [
-    "\u4F60\u662F Orca \u4E2D\u4E00\u4E2A\u667A\u80FD\u4F53\u56E2\u961F\u7684\u534F\u8C03\u5668\uFF08lead\uFF09\u3002\u7528\u6237\u548C\u4F60\u5BF9\u8BDD\uFF1B\u56E2\u961F\u6210\u5458\u4E3A\u4F60\u5DE5\u4F5C\uFF0C\u6BCF\u4E2A\u6210\u5458\u5728\u4F60\u5DE5\u4F5C\u533A\u4E2D\u81EA\u5DF1\u7684 Orca \u7EC8\u7AEF\u91CC\u8FD0\u884C\u3002",
+    "\u4F60\u662F Orca \u4E2D\u4E00\u4E2A\u667A\u80FD\u4F53\u56E2\u961F\u7684\u534F\u8C03\u8005\uFF08lead\uFF09\u3002\u7528\u6237\u548C\u4F60\u5BF9\u8BDD\uFF1B\u56E2\u961F\u6210\u5458\u4E3A\u4F60\u5DE5\u4F5C\uFF0C\u6BCF\u4E2A\u6210\u5458\u662F\u4F60\u5DE5\u4F5C\u533A\u91CC\u72EC\u7ACB\u8FD0\u884C\u7684\u667A\u80FD\u4F53\uFF1A\u6309\u56E2\u961F\u8BBE\u7F6E\u4EE5\u804A\u5929\uFF08Orca \u7684\u56FE\u5F62\u754C\u9762\uFF09\u6216\u7EC8\u7AEF\u65B9\u5F0F\u8FD0\u884C\u3002",
     LANGUAGE_RULE,
     team.goal.trim() ? `\u56E2\u961F\u76EE\u6807\uFF1A${team.goal.trim()}` : "",
     `\u56E2\u961F\u6765\u81EA ${source}\u3002`,
@@ -21735,6 +21747,165 @@ function traceTask(was, task, actor, emit, delegation = false) {
 import { readFile as readFile3 } from "node:fs/promises";
 import { isAbsolute, join as join5 } from "node:path";
 
+// src/worker/orchestra.ts
+var supported = null;
+var probedFor = null;
+var generation = 0;
+var lastSent = /* @__PURE__ */ new Map();
+function orchestrationSupported(adapter) {
+  return adapter ? probedFor === adapter ? supported ?? false : false : supported ?? false;
+}
+async function detectOrchestration(adapter) {
+  if (probedFor === adapter && supported !== null) return supported;
+  const asked = generation;
+  const answer = await adapter.rawCli(["orchestration", "worker-start", "--help"], 2e4).then(() => true, () => false);
+  if (asked !== generation) return false;
+  supported = answer;
+  probedFor = adapter;
+  return answer;
+}
+function resetOrchestrationSupport() {
+  supported = null;
+  probedFor = null;
+  generation += 1;
+}
+var Orchestra = class {
+  constructor(adapter, lead) {
+    this.adapter = adapter;
+    this.lead = lead;
+  }
+  runs = /* @__PURE__ */ new Map();
+  enabled() {
+    return orchestrationSupported(this.adapter);
+  }
+  /** Whether Orca's orchestration holds a dispatch for this member, so it can be asked about and stopped through. */
+  holds(member) {
+    return this.enabled() && !!member?.dispatchId;
+  }
+  /**
+   * Whether that dispatch is what tells the member's turn: no. A dispatch describes one turn, and Orca leaves it settled
+   * for good; when the plugin has since sent the member the work it is on itself (see sendMember), the dispatch speaks
+   * of an earlier turn and must not end this one.
+   */
+  governs(member) {
+    if (!this.holds(member)) return false;
+    const last = lastSent.get(member.dispatchId);
+    return !last || !!member.dispatchedAt && Date.parse(member.dispatchedAt) >= last;
+  }
+  /** Records that the plugin sent a dispatch the work itself; from then on that dispatch describes an earlier turn. */
+  static sent(dispatchId) {
+    lastSent.set(dispatchId, Date.now());
+  }
+  /** The Orca Run of a team run, created on the lead's behalf when there is none. */
+  async runFor(teamRunId, leadId, objective) {
+    if (!this.enabled()) return null;
+    const known = this.runs.get(teamRunId);
+    if (known) return known;
+    const from = this.lead(leadId);
+    if (!from) return null;
+    try {
+      const made = await this.adapter.runCli(["orchestration", "run-create", "--objective", objective.slice(0, 2e3), "--from", from], 6e4);
+      if (!made?.runId) return null;
+      this.runs.set(teamRunId, made.runId);
+      return made.runId;
+    } catch {
+      return null;
+    }
+  }
+  /** Remembers a Run for a team run that already has one (after a restart, from the store). */
+  bind(teamRunId, runId) {
+    this.runs.set(teamRunId, runId);
+  }
+  /**
+   * Attaches an agent the plugin already started (its own surface and model) as a worker of the run, with its task.
+   * Orca injects its worker preamble into the agent's next turn, so the agent reports through `worker_done`.
+   */
+  async startWorker(input2) {
+    if (!this.enabled()) return null;
+    const from = this.lead(input2.leadId);
+    if (!from) return null;
+    try {
+      const result = await this.adapter.runCli(
+        ["orchestration", "worker-start", "--run", input2.runId, "--from", from, "--task-title", input2.title.slice(0, 200), "--spec", input2.spec, "--terminal", input2.handle, "--worktree", `path:${input2.workspacePath}`],
+        18e4
+      );
+      if (!result?.dispatchId) return null;
+      return { dispatchId: result.dispatchId, taskId: result.taskId, runId: result.runId ?? input2.runId, state: result.state ?? "ready" };
+    } catch {
+      return null;
+    }
+  }
+  /** What Orca says about a dispatch; null when the CLI can't answer (a plugin restart, an older Orca). */
+  async show(dispatchId) {
+    if (!this.enabled()) return null;
+    try {
+      const result = await this.adapter.runCli(["orchestration", "worker-show", "--dispatch", dispatchId], 3e4);
+      return result?.dispatchId ? result : null;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Sends text to a worker through Orca: a busy worker gets it as mail when its turn ends, a finished one as a
+   * follow-up dispatch. Returns what Orca did, or null when the CLI can't send (an older Orca, no lead to send from).
+   */
+  async send(dispatchId, leadId, subject, body) {
+    if (!this.enabled()) return null;
+    const from = this.lead(leadId);
+    if (!from) return null;
+    try {
+      const result = await this.adapter.runCli(
+        ["orchestration", "send", "--from", from, "--to", `dispatch:${dispatchId}`, "--subject", subject.slice(0, 200), "--body", body],
+        6e4
+      );
+      return {
+        delivery: result?.delivery === "follow_up" || !!result?.dispatchId && result.dispatchId !== dispatchId ? "follow_up" : "mail",
+        dispatchId: result?.dispatchId ?? dispatchId,
+        followUpOf: result?.followUpOf ?? dispatchId,
+        state: result?.state ?? "ready"
+      };
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Stops a worker's agent through Orca; the dispatch is fenced so nothing else is delivered to it. Only a terminal
+   * Orca started itself is closed: on one the plugin launched and attached, Orca refuses (`stop_unknown`, "the worker
+   * terminal is external") and the process keeps running, so the caller still closes the terminal itself.
+   */
+  async stop(dispatchId) {
+    if (!this.enabled()) return { ok: false, state: "unknown", error: "orchestration not available" };
+    try {
+      const result = await this.adapter.runCli(["orchestration", "worker-stop", "--dispatch", dispatchId], 6e4);
+      return { ok: true, state: result?.state ?? "stopped", error: null };
+    } catch (error62) {
+      return { ok: false, state: "unknown", error: error62 instanceof Error ? error62.message : String(error62) };
+    }
+  }
+  /**
+   * Settles a dispatch whose worker the plugin has finished itself: the member reported through its own team tool, not
+   * through `worker_done`, so Orca still holds the dispatch open and would escalate "stopped without reporting" to the
+   * lead. Abandoning fences it without touching the agent's process (the plugin keeps the agent for the next task).
+   */
+  async abandon(dispatchId) {
+    if (!this.enabled()) return false;
+    try {
+      await this.adapter.runCli(["orchestration", "worker-abandon", "--dispatch", dispatchId], 6e4);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Whether a dispatch has stopped working: a settled state, or Orca says the agent's pane is idle after work. */
+  static settled(dispatch2) {
+    const state = dispatch2.state.toLowerCase();
+    if (/stop|cancel|abandon|kill/.test(state)) return { settled: true, outcome: "canceled" };
+    if (/succeed|complete|done/.test(state)) return { settled: true, outcome: "completed" };
+    if (/fail|error/.test(state)) return { settled: true, outcome: "failed" };
+    return { settled: false, outcome: "completed" };
+  }
+};
+
 // src/worker/store.ts
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
@@ -22069,10 +22240,14 @@ var adapterRef = null;
 var orca = () => adapterRef;
 var store = null;
 var readTeamRef = async (lead) => ({ team: lead.team, source: "the session's copy" });
+var orchestra = null;
 function initCollaboration(adapter, runs, readTeam, teamBin = "agent-team") {
   adapterRef = adapter;
   store = runs;
   readTeamRef = readTeam;
+  orchestra = new Orchestra(adapter, (leadId) => store.lead(leadId)?.terminalId ?? null);
+  resetOrchestrationSupport();
+  void detectOrchestration(adapter).then((on) => adapter.orca.log(`[ensemble] Orca orchestration ${on ? "on: members ride Orca's Runs" : "not available: members are dispatched by the plugin"}`)).catch(() => void 0);
   adapter.teamBin = teamBin;
   adapter.chatHome = (handle) => {
     const member = store.member(handle);
@@ -22163,7 +22338,7 @@ async function dispatch(ctx, leadId, spec, prompt, lang) {
   const existing = await reusableMember(leadId, spec);
   if (existing === "busy") throw new Error(lang === "zh" ? `${spec.name} \u6B63\u5FD9\u4E8E\u5176\u4ED6\u5DE5\u4F5C\uFF1B\u8BF7\u7B49\u5B83\u5B8C\u6210\uFF0C\u6216\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u522B\u7684\u89D2\u8272\u3002` : `${spec.name} is busy with other work; wait for it to finish, or give the work to another role.`);
   if (existing) {
-    const sent = await orca().send(existing, prompt);
+    const sent = await sendMember(existing, prompt);
     if (!sent) throw new Error(lang === "zh" ? `\u65E0\u6CD5\u628A\u4EFB\u52A1\u4EA4\u7ED9 ${spec.name}\u3002` : `Could not hand the task to ${spec.name}.`);
     seenWorking.delete(existing);
     return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true, surface: store.member(existing)?.surface ?? "terminal", note: null };
@@ -22195,6 +22370,20 @@ ${P.memberStartPrompt(ctx.team, spec, prompt)}`;
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
   void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
+  const teamRun = store.leadRun(leadId, true);
+  if (orchestra?.enabled() && teamRun) {
+    const orcaRun = teamRun.orcaRunId ?? await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`);
+    if (orcaRun) {
+      const dispatch2 = await orchestra.startWorker({ runId: orcaRun, leadId, handle: terminalId, title, spec: specBrief(spec), workspacePath: ctx.lead.path });
+      const current = store.member(terminalId);
+      if (dispatch2) {
+        if (current) await store.setMember({ ...current, dispatchId: dispatch2.dispatchId, orcaRunId: orcaRun });
+        if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current2) => ({ ...current2, orcaRunId: orcaRun }));
+      } else {
+        notes.push(lang === "zh" ? `${spec.name}\uFF1AOrca \u7F16\u6392\u6CA1\u6709\u63A5\u7BA1\u8FD9\u4E2A\u6210\u5458\uFF0C\u63D2\u4EF6\u81EA\u5DF1\u6D3E\u53D1\u3002` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`);
+      }
+    }
+  }
   return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
 }
 async function resolveModel(model) {
@@ -22203,9 +22392,29 @@ async function resolveModel(model) {
   const hint = choice.matches.length ? ` (${choice.error === "ambiguous" ? "one of" : "near"}: ${choice.matches.join(", ")})` : "";
   throw new Error(`pi has no model "${model}"${hint}. Put a provider/id model in the team, such as ${choice.matches[0] ?? "provider/id"}.`);
 }
-async function sendIfIdle(id, text) {
+function specBrief(spec) {
+  return [spec.instructions.trim(), spec.folders.length ? `Folders: ${spec.folders.join(", ")}` : "", `Work through the agent-team command (${TEAM_BIN} report <json>) and report with worker_done.`].filter(Boolean).join("\n\n").slice(0, 2e4);
+}
+async function sendMember(id, text, leadId) {
   const member = store.member(id);
-  const workspaceId = store.lead(member?.leadTerminalId ?? id)?.workspaceId ?? null;
+  const lead = member ? store.lead(member.leadTerminalId) : void 0;
+  if (orchestra?.governs(member) && member.leadTerminalId && member.surface === "chat") {
+    const sent = await orchestra.send(member.dispatchId, member.leadTerminalId, "Ensemble", text);
+    if (sent) {
+      noteAgentWorking(id);
+      if (sent.dispatchId !== member.dispatchId) await store.setMember({ ...member, dispatchId: sent.dispatchId });
+      return true;
+    }
+  }
+  const workspaceId = lead?.workspaceId ?? null;
+  if (!await isIdleAgent(id, workspaceId)) return false;
+  const typed = await orca().send(id, text);
+  if (typed && orchestra?.holds(member)) Orchestra.sent(member.dispatchId);
+  return typed;
+}
+async function sendIfIdle(id, text) {
+  if (store.member(id)) return sendMember(id, text);
+  const workspaceId = store.lead(id)?.workspaceId ?? null;
   if (!await isIdleAgent(id, workspaceId)) return false;
   return orca().send(id, text);
 }
@@ -22418,13 +22627,20 @@ async function moveAlong(runId, depth) {
   else await store.log(runId, [{ component: run.mode === "team" ? "tasks" : "reports", action: "notify", direction: "out", from: "plugin", to: ["lead"], subject: run.mode === "team" ? String(taken.round) : `batch ${taken.round}`, note: "" }]);
 }
 var DISPATCH_MARGIN_MS = 3e3;
-function finishIfCurrent(runId, seen, endedAt, outcome, message) {
-  return store.mutate(runId, (current) => {
+async function finishIfCurrent(runId, seen, endedAt, outcome, message) {
+  const after = await store.mutate(runId, (current) => {
     const member = memberOf(current, seen.agentId);
     if (!member || member.state !== "working" && member.state !== "attention" || member.dispatchedAt !== seen.dispatchedAt) return current;
     if (Date.parse(member.dispatchedAt) > endedAt - DISPATCH_MARGIN_MS) return current;
     return finishMember(current, seen.agentId, outcome, message, now());
   });
+  const session = store.member(seen.agentId);
+  const finished = memberOf(after, seen.agentId)?.state !== "working" && memberOf(after, seen.agentId)?.state !== "attention";
+  if (finished && orchestra?.holds(session)) {
+    await orchestra.abandon(session.dispatchId).catch(() => void 0);
+    await store.setMember({ ...session, dispatchId: void 0 });
+  }
+  return after;
 }
 async function reconcile(runId) {
   const run = store.get(runId);
@@ -22433,6 +22649,44 @@ async function reconcile(runId) {
   if (workingMembers(run).length) await refreshAgents(workspaceId);
   for (const member of workingMembers(run)) {
     if (Date.now() - Date.parse(member.dispatchedAt) < 3e4) continue;
+    const session = store.member(member.agentId);
+    if (orchestra?.governs(session) && session.dispatchId) {
+      const dispatch2 = await orchestra.show(session.dispatchId);
+      if (dispatch2) {
+        const settled = Orchestra.settled(dispatch2);
+        if (settled.settled) {
+          const message = reports.get(member.agentId) ?? await lastMessage(member.agentId);
+          reports.delete(member.agentId);
+          await finishIfCurrent(runId, member, Date.now(), outcomeOf(dispatch2), message);
+          continue;
+        }
+        const gone = /exit|unverifi/i.test(dispatch2.liveness ?? "");
+        const stale = Date.now() - Date.parse(member.dispatchedAt) > 6e5;
+        if (gone || stale) {
+          if (!await agentAlive(member.agentId, workspaceId)) {
+            await finishIfCurrent(runId, member, Date.now(), "failed", "(the member's agent stopped or its terminal was closed)");
+            continue;
+          }
+          const state2 = orca().stateOf(member.agentId);
+          const turn = await memberTurnEnded(member.agentId, member);
+          const ended = state2 === "done" || state2 === "waiting" ? turn.ended || stale : turn.ended;
+          if (ended) {
+            const message = reports.get(member.agentId) ?? turn.text ?? await lastMessage(member.agentId);
+            reports.delete(member.agentId);
+            await finishIfCurrent(runId, member, Date.now(), "completed", message);
+            continue;
+          }
+        }
+        const waiting = /attention|blocked|waitingOnHuman|permission/i.test(dispatch2.activity ?? "");
+        await store.mutate(runId, (current) => {
+          const live = memberOf(current, member.agentId);
+          if (!live || live.state !== "working" && live.state !== "attention") return current;
+          const next = waiting ? "attention" : "working";
+          return live.state === next ? current : updateMember(current, member.agentId, { state: next }, now());
+        });
+        continue;
+      }
+    }
     if (!await agentAlive(member.agentId, workspaceId)) {
       await finishIfCurrent(runId, member, Date.now(), "failed", "(the member's agent stopped or its terminal was closed)");
       continue;
@@ -22453,6 +22707,9 @@ async function reconcile(runId) {
   }
   await advance(runId);
 }
+function outcomeOf(dispatch2, mainAgent) {
+  return dispatch2 ? Orchestra.settled(dispatch2).outcome : mainAgent?.outcome === "failure" ? "failed" : mainAgent?.outcome === "cancellation" || mainAgent?.outcome === "interruption" ? "canceled" : "completed";
+}
 async function onAgentStatus(payload) {
   const terminalId = payload.terminalId;
   if (!terminalId) return;
@@ -22466,13 +22723,29 @@ async function onAgentStatus(payload) {
     if (payload.state === "blocked" && member.state === "working") await store.mutate(run.id, (current) => updateMember(current, terminalId, { state: "attention" }, now()));
     if (payload.state === "working" && member.state === "attention") await store.mutate(run.id, (current) => updateMember(current, terminalId, { state: "working" }, now()));
     if (payload.state === "done" && (member.state === "working" || member.state === "attention")) {
-      const turn = await memberTurnEnded(terminalId, member);
-      if (turn.ended) {
-        const outcome = payload.mainAgent?.outcome === "failure" ? "failed" : payload.mainAgent?.outcome === "cancellation" || payload.mainAgent?.outcome === "interruption" ? "canceled" : "completed";
-        const message = reports.get(terminalId) ?? turn.text ?? await lastMessage(terminalId);
-        reports.delete(terminalId);
-        await finishIfCurrent(run.id, member, Date.now(), outcome, message);
-        await advance(run.id);
+      const session = store.member(terminalId);
+      let dispatch2 = null;
+      if (orchestra?.governs(session)) dispatch2 = await orchestra.show(session.dispatchId);
+      if (dispatch2) {
+        if (Orchestra.settled(dispatch2).settled) {
+          const message = reports.get(terminalId) ?? await lastMessage(terminalId);
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), outcomeOf(dispatch2, payload.mainAgent), message);
+          await advance(run.id);
+        } else if (reports.has(terminalId)) {
+          const message = reports.get(terminalId);
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), "completed", message);
+          await advance(run.id);
+        }
+      } else {
+        const turn = await memberTurnEnded(terminalId, member);
+        if (turn.ended) {
+          const message = reports.get(terminalId) ?? turn.text ?? await lastMessage(terminalId);
+          reports.delete(terminalId);
+          await finishIfCurrent(run.id, member, Date.now(), outcomeOf(null, payload.mainAgent), message);
+          await advance(run.id);
+        }
       }
     }
   }
@@ -23222,8 +23495,15 @@ ${page.text}`));
         return { ...noted, status: "closed", claims: [], updatedAt: now() };
       });
       let archived = 0;
+      let stopped = 0;
       if (archiveMembers) {
         for (const member of run.members) {
+          const session = store.member(member.agentId);
+          if (orchestra?.holds(session)) {
+            const result = await orchestra.stop(session.dispatchId);
+            if (result.ok) stopped += 1;
+            else orca().orca.log(`[ensemble] run ${run.id}: Orca did not stop the worker of ${member.title} (${session.dispatchId}): ${result.error ?? result.state}`);
+          }
           if (!await isIdleAgent(member.agentId, store.lead(agent.id)?.workspaceId ?? null)) continue;
           await orca().closeTerminal(member.agentId).then(() => {
             archived += 1;
@@ -23232,7 +23512,8 @@ ${page.text}`));
       }
       const open2 = run.tasks.filter((task) => task.state === "todo" || task.state === "doing");
       const ids = open2.map((task) => task.id).join(", ");
-      return ok(zh ? `\u5DF2\u7ED3\u675F\u8FD0\u884C ${run.id}\u300C${run.title}\u300D\u3002${archiveMembers ? `\u5DF2\u5173\u95ED ${archived} \u4E2A\u6210\u5458\u7684\u7EC8\u7AEF\u3002` : ""}${open2.length ? `\u8FD8\u6709 ${open2.length} \u4E2A\u4EFB\u52A1\u672A\u5B8C\u6210\uFF1A${ids}\u3002` : ""}` : `Closed run ${run.id} "${run.title}".${archiveMembers ? ` Closed ${archived} member terminal${archived === 1 ? "" : "s"}.` : ""}${open2.length ? ` ${open2.length} task${open2.length === 1 ? " was" : "s were"} still open: ${ids}.` : ""}`);
+      const stoppedNote = zh ? `\u5DF2\u505C\u6B62 ${stopped} \u4E2A\u6210\u5458\u7684 Orca \u5DE5\u4F5C\u5355\u5143\u3002` : ` Stopped ${stopped} member worker${stopped === 1 ? "" : "s"} in Orca.`;
+      return ok(zh ? `\u5DF2\u7ED3\u675F\u8FD0\u884C ${run.id}\u300C${run.title}\u300D\u3002${archiveMembers ? `\u5DF2\u5173\u95ED ${archived} \u4E2A\u6210\u5458\u7684\u7EC8\u7AEF\u3002${stopped ? stoppedNote : ""}` : ""}${open2.length ? `\u8FD8\u6709 ${open2.length} \u4E2A\u4EFB\u52A1\u672A\u5B8C\u6210\uFF1A${ids}\u3002` : ""}` : `Closed run ${run.id} "${run.title}".${archiveMembers ? ` Closed ${archived} member terminal${archived === 1 ? "" : "s"}.${stopped ? stoppedNote : ""}` : ""}${open2.length ? ` ${open2.length} task${open2.length === 1 ? " was" : "s were"} still open: ${ids}.` : ""}`);
     }
   });
   const readTool = defineTool({

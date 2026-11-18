@@ -138,6 +138,19 @@ export class OrcaAdapter {
     });
   }
 
+  /**
+   * Runs `orca <args>` and resolves with its output when the command succeeds, without expecting JSON: for capability
+   * probes such as `orchestration worker-start --help`, which prints help text and exits 0.
+   */
+  rawCli(args: string[], timeoutMs = 60_000): Promise<string> {
+    const cli = this.cli;
+    if (!cli) return Promise.reject(new Error("The orca CLI was not found next to Orca."));
+    const env: NodeJS.ProcessEnv = { HOME: homedir(), PATH: `${dirname(cli)}:/usr/bin:/bin:/usr/sbin:/sbin`, TMPDIR: process.env.TMPDIR ?? "/tmp", ORCA_USER_DATA_PATH: this.profile ?? defaultProfile() };
+    return new Promise((resolve, reject) => {
+      execFile("/bin/bash", [cli, ...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => (error ? reject(error) : resolve(String(stdout))));
+    });
+  }
+
   // ----- Agents and terminals
 
   /** The terminal or chat a status event is about: chats come with a pane key only. */

@@ -56,6 +56,9 @@ export interface MemberSession {
   effort?: string;
   /** Chat or terminal; records from before this field run in terminals. */
   surface?: Surface;
+  /** Its worker in Orca's orchestration: the dispatch Orca supervises, and the team run's Orca Run. */
+  dispatchId?: string;
+  orcaRunId?: string;
   title: string;
   createdAt: string;
 }
