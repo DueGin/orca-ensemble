@@ -50,3 +50,42 @@ describe("values that cross to Orca", () => {
     expect(presets.map((preset) => [preset.id, preset.team.candidates[0]!.agent, preset.team.candidates[0]!.notes])).toEqual([["p-1", "codex", ""]]);
   });
 });
+
+describe("renaming a preset", () => {
+  it("changes its name, refuses an empty name or one another preset has, and keeps the stored value plain JSON", async () => {
+    const { createApi } = await import("../src/worker/api");
+    const { OrcaAdapter } = await import("../src/worker/adapter");
+    const { Store } = await import("../src/worker/store");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    let stored: unknown = null;
+    const worker = {
+      api: { major: 1, minor: 9 },
+      host: { call: async () => ({}), has: () => true },
+      commands: { register: () => ({ dispose() {} }) },
+      events: { on: () => ({ dispose() {} }) },
+      hooks: { on: () => ({ dispose() {} }) },
+      panels: { handle: () => ({ dispose() {} }), post() {} },
+      storage: {
+        get: async () => stored,
+        set: async (_key: string, value: unknown) => {
+          if (!orcaJson.safeParse(value).success) throw new Error("value: Invalid input");
+          stored = value;
+        },
+      },
+      settings: { get: async () => null },
+      log() {},
+    } as unknown as OrcaWorker;
+    const api = createApi({ adapter: new OrcaAdapter(worker), store: new Store(mkdtempSync(join(tmpdir(), "ensemble-presets-"))), settings: async () => ({ language: "auto", directive: true, defaultTeam: "" }), locale: () => "zh-CN", problems: () => [] } as never);
+    const team = (name: string) => ({ ...draft, name });
+    expect((await api.savePreset({ preset: { team: team("common") as never } })).ok).toBe(true);
+    expect((await api.savePreset({ preset: { team: team("GPT领导") as never } })).ok).toBe(true);
+    const [common] = await api.presets();
+    expect(await api.renamePreset({ id: common!.id, name: "  Claude领导 " })).toEqual({ ok: true });
+    expect((await api.presets()).map((preset) => preset.team.name)).toEqual(["Claude领导", "GPT领导"]);
+    expect(await api.renamePreset({ id: common!.id, name: "gpt领导" })).toEqual({ ok: false, error: "taken" });
+    expect(await api.renamePreset({ id: common!.id, name: "  " })).toEqual({ ok: false, error: "empty" });
+    expect(await api.renamePreset({ id: "p-missing", name: "x" })).toEqual({ ok: false, error: "missing" });
+  });
+});

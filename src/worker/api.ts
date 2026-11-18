@@ -406,6 +406,16 @@ export function createApi(deps: ApiDeps) {
       await writePresets(orca, list.some((item) => item.id === id) ? list.map((item) => (item.id === id ? entry : item)) : [...list, entry]);
       return { ok: true as const, id };
     },
+    renamePreset: async ({ id, name }: { id: string; name: string }) => {
+      const title = name.trim();
+      if (!title) return { ok: false as const, error: "empty" as const };
+      const list = await readPresets(orca);
+      const preset = list.find((item) => item.id === id);
+      if (!preset) return { ok: false as const, error: "missing" as const };
+      if (list.some((item) => item.id !== id && teamTitle(item.team).toLowerCase() === title.toLowerCase())) return { ok: false as const, error: "taken" as const };
+      await writePresets(orca, list.map((item) => (item.id === id ? { ...item, team: { ...item.team, name: title }, updatedAt: new Date().toISOString() } : item)));
+      return { ok: true as const };
+    },
     deletePreset: async ({ id }: { id: string }) => {
       await writePresets(orca, (await readPresets(orca)).filter((item) => item.id !== id));
       return { ok: true };

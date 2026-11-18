@@ -1,6 +1,7 @@
 // The Start tab: start a lead on a team (a team file of this checkout, or a preset), here or in a new worktree, with the
 // user's request; or make an agent already running here the lead; or use @team in Orca's own new-agent box.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useTeamFiles } from "./team-files";
 import { TEAM_MODES, type PromptLanguage, type TeamMode } from "../../shared/modes";
 import { runtimeLabel, teamTitle, type Team } from "../../shared/team";
 import type { AppState, StartInput } from "../../shared/views";
@@ -32,7 +33,7 @@ function TeamOption({ choice, on, onPick }: { choice: Choice; on: boolean; onPic
 
 export function StartTab({ state, onStarted }: { state: AppState; onStarted(terminalId: string): void }) {
   const focused = state.focused;
-  const [files, setFiles] = useState<{ file: string; title: string; team: Team | null; errors: string[] }[] | null>(null);
+  const { files } = useTeamFiles(focused?.path);
   const [picked, setPicked] = useState<string | null>(null);
   const [where, setWhere] = useState<"here" | "new">("here");
   const [name, setName] = useState("");
@@ -41,11 +42,6 @@ export function StartTab({ state, onStarted }: { state: AppState; onStarted(term
   const [request, setRequest] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!focused?.path) return setFiles([]);
-    void call("teamFiles", { root: focused.path }).then(setFiles, () => setFiles([]));
-  }, [focused?.path]);
 
   const choices = useMemo<Choice[]>(() => [
     ...(files ?? []).filter((file) => file.team).map((file) => ({ key: `file:${file.file}`, label: file.title, team: file.team!, kind: "file" as const, source: { kind: "file" as const, file: file.file, root: focused?.path ?? "" } })),

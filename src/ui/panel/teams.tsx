@@ -5,6 +5,7 @@ import type { AppState } from "../../shared/views";
 import { t } from "../i18n";
 import { Badge, Button, Empty, Icon, Spinner } from "../kit";
 import { call } from "../orca";
+import { useTeamFiles } from "./team-files";
 
 function Summary({ team }: { team: Team }) {
   return (
@@ -18,7 +19,7 @@ function Summary({ team }: { team: Team }) {
 
 export function TeamsTab({ state, refresh }: { state: AppState; refresh(): void }) {
   const root = state.focused?.path ?? null;
-  const [files, setFiles] = useState<{ file: string; title: string; team: Team | null; errors: string[] }[] | null>(null);
+  const { files, reload: load } = useTeamFiles(root);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +27,16 @@ export function TeamsTab({ state, refresh }: { state: AppState; refresh(): void 
   const [goal, setGoal] = useState("");
   const [planName, setPlanName] = useState("");
   const [planning, setPlanning] = useState(false);
-  const load = () => {
-    if (!root) return setFiles([]);
-    void call("teamFiles", { root }).then(setFiles, () => setFiles([]));
+  const [renaming, setRenaming] = useState<{ id: string; name: string; error: string | null } | null>(null);
+  useEffect(load, [state.presets.length]);
+  const rename = (id: string, value: string) => {
+    void call("renamePreset", { id, name: value }).then((result) => {
+      if (result.ok) {
+        setRenaming(null);
+        refresh();
+      } else setRenaming({ id, name: value, error: result.error === "taken" ? t("app.teams.renameTaken", { name: value.trim() }) : t("app.teams.renameEmpty") });
+    }, (reason: unknown) => setRenaming({ id, name: value, error: String(reason) }));
   };
-  useEffect(load, [root, state.presets.length]);
 
   const open = (file: string) => {
     if (!root) return;
@@ -122,7 +128,26 @@ export function TeamsTab({ state, refresh }: { state: AppState; refresh(): void 
               <Badge tone="var(--primary)">{t(`mode.${preset.team.mode}`)}</Badge>
             </div>
             <Summary team={preset.team} />
-            {confirming === preset.id ? (
+            {renaming?.id === preset.id ? (
+              <div className="stack" style={{ "--gap": "4px" } as CSSProperties}>
+                <div className="row">
+                  <input
+                    className="input"
+                    autoFocus
+                    value={renaming.name}
+                    placeholder={t("app.teams.renameHint")}
+                    onChange={(event) => setRenaming({ id: preset.id, name: event.target.value, error: null })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") rename(preset.id, renaming.name);
+                      if (event.key === "Escape") setRenaming(null);
+                    }}
+                  />
+                  <Button size="sm" variant="primary" icon="check" disabled={!renaming.name.trim()} onClick={() => rename(preset.id, renaming.name)} />
+                  <Button size="sm" variant="ghost" icon="x" onClick={() => setRenaming(null)} />
+                </div>
+                {renaming.error ? <span className="tiny bad">{renaming.error}</span> : null}
+              </div>
+            ) : confirming === preset.id ? (
               <div className="row wrap">
                 <span className="small">{t("app.teams.deleteConfirm", { name: teamTitle(preset.team) })}</span>
                 <Button size="sm" variant="danger" onClick={() => void call("deletePreset", { id: preset.id }).then(() => { setConfirming(null); refresh(); })}>{t("app.teams.delete")}</Button>
@@ -131,6 +156,7 @@ export function TeamsTab({ state, refresh }: { state: AppState; refresh(): void 
             ) : (
               <div className="row">
                 {root ? <Button size="sm" icon="copy" disabled={busy} onClick={() => create(preset.id, teamTitle(preset.team))}>{t("app.teams.saveToProject")}</Button> : null}
+                <Button size="sm" variant="ghost" icon="edit" title={t("app.teams.rename")} onClick={() => setRenaming({ id: preset.id, name: teamTitle(preset.team), error: null })} />
                 <Button size="sm" variant="ghost" icon="trash" title={t("app.teams.delete")} onClick={() => setConfirming(preset.id)} />
               </div>
             )}

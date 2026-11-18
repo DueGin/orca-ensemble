@@ -23785,6 +23785,16 @@ ${prompt}`, focus: false });
       await writePresets(orca2, list.some((item) => item.id === id) ? list.map((item) => item.id === id ? entry : item) : [...list, entry]);
       return { ok: true, id };
     },
+    renamePreset: async ({ id, name: name2 }) => {
+      const title = name2.trim();
+      if (!title) return { ok: false, error: "empty" };
+      const list = await readPresets(orca2);
+      const preset = list.find((item) => item.id === id);
+      if (!preset) return { ok: false, error: "missing" };
+      if (list.some((item) => item.id !== id && teamTitle(item.team).toLowerCase() === title.toLowerCase())) return { ok: false, error: "taken" };
+      await writePresets(orca2, list.map((item) => item.id === id ? { ...item, team: { ...item.team, name: title }, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : item));
+      return { ok: true };
+    },
     deletePreset: async ({ id }) => {
       await writePresets(orca2, (await readPresets(orca2)).filter((item) => item.id !== id));
       return { ok: true };

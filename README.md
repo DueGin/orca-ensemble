@@ -43,7 +43,7 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
 
 - **Ensemble panel** (right sidebar, robot icon): the focused workspace's team session, its mode (switch it, or see it locked), the brief waiting for your **Confirm**, the members with their live state (click to show a member's terminal), and the run's data-flow diagram with a page per component.
   - **Start**: pick a team file of the project or a preset, write the request, choose this workspace or a **new worktree**, the mode and the language; or make an agent already running here the lead.
-  - **Teams**: the project's team files (open one in the team editor), create a team, **plan a team with AI** (an agent reads the project, checks which agent CLIs you have and writes the team file), and the presets.
+  - **Teams**: the project's team files (open one in the team editor), create a team, **plan a team with AI** (an agent reads the project, checks which agent CLIs you have and writes the team file), and the presets (copy one to the project, rename or delete it). A team renamed in the team editor shows here once you save the file.
 - **Team editor**: `.agents/teams/*.team.json` files open in a visual editor (Orca's Source view still shows the JSON): mode cards, language, the lead's agent/model/effort, fixed roles (folders, instructions) and the candidate pool (described by what each is good at and must not do), inline validation, undo/redo, **Save as preset**, **Start a session**.
 - **Run report**: a full-width tab per run: the data-flow diagram, members, a Kanban task board, the brief, plans, a chat-like team board with read progress, file claims; for delegation the split, sub-agent contexts, reports and summary.
 - **`@team` in Orca's own new agent**: start any agent in terminal mode with a first prompt such as
@@ -159,7 +159,7 @@ Versions: each release is a git tag `vX.Y.Z`, the version in `orca-plugin.json` 
 
 - **「智能体团队」面板**（右侧边栏，机器人图标）：当前工作区的团队会话、协作模式（可切换，自动模式确定后显示锁定）、等你**确认**的需求简报、成员及实时状态（点击可打开成员终端）、运行的数据流图，每个组件都能点进详情。
   - **开始**：选项目里的团队文件或预设，写需求，选择在当前工作区或**新建 worktree**、模式和语言；也可以把当前工作区里已经在运行的 agent 设为协调器。
-  - **团队**：项目里的团队文件（在团队编辑器里打开）、新建团队、**用 AI 规划团队**（一个 agent 阅读项目、查看你装了哪些 agent CLI，然后写出团队文件），以及预设。
+  - **团队**：项目里的团队文件（在团队编辑器里打开）、新建团队、**用 AI 规划团队**（一个 agent 阅读项目、查看你装了哪些 agent CLI，然后写出团队文件），以及预设（可复制到项目、重命名或删除）。在团队编辑器里改了团队名，保存文件后这里就会更新。
 - **团队编辑器**：`.agents/teams/*.team.json` 会用可视化编辑器打开（Orca 的 Source 视图仍可看 JSON）：模式卡片、语言、协调器的 agent / 模型 / 推理强度、固定角色（目录、说明）和候选成员池（写清擅长什么、不要交给它什么），即时校验、撤销重做、**另存为预设**、**开始会话**。
 - **运行报告**：每次运行一个全宽页面：数据流图、成员、看板式任务板、需求简报、计划审批、带已读进度的聊天式黑板、文件认领；委派模式下是任务拆分、子智能体上下文、结果汇报和汇总。
 - **在 Orca 自带的新建 agent 里用 `@team`**：以终端模式新建任意 agent，第一条消息这样写：
