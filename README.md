@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="128" alt="Ensemble logo: a robot conductor with a baton leading two small robots in a parade"></p>
+
 # Ensemble for Orca · Orca 智能体团队插件
 
 **[English](#english)** · **[中文](#中文)**
