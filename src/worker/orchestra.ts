@@ -6,6 +6,8 @@
 // A dispatch is `ctx_…`. `worker-show` is the read side: it says succeeded/failed/running and the last activity. The
 // lead alone consumes Orca's mail (`check`), so the plugin only ever reads with `worker-show` and never steals it.
 import type { OrcaAdapter } from "./adapter";
+import { chatSessionId, isChatHandle } from "../shared/agents";
+import { callerIs } from "./caller";
 
 /** A supervised worker: the dispatch Orca made for one member of one run. */
 export interface Dispatch {
@@ -70,6 +72,19 @@ export class Orchestra {
 
   constructor(private readonly adapter: OrcaAdapter, private readonly lead: (id: string) => string | null) {}
 
+  /**
+   * Runs an orchestration call "from" the lead. When the lead's own command is being handled it runs in the lead's
+   * shell, where Orca knows the lead by its environment: no \`--from\` (which a chat can't be named in). Otherwise the
+   * plugin runs it naming the lead's terminal.
+   */
+  private as<T>(from: string, args: string[], timeoutMs: number): Promise<T> {
+    const caller = callerIs(from);
+    if (!caller) return this.adapter.runCli<T>(args, timeoutMs);
+    const at = args.indexOf("--from");
+    const own = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
+    return caller.exec<T>(own, timeoutMs);
+  }
+
   enabled(): boolean {
     return orchestrationSupported(this.adapter);
   }
@@ -103,7 +118,7 @@ export class Orchestra {
     const from = this.lead(leadId);
     if (!from) return null;
     try {
-      const made = await this.adapter.runCli<{ runId: string }>(["orchestration", "run-create", "--objective", objective.slice(0, 2000), "--from", from], 60_000);
+      const made = await this.as<{ runId: string }>(from, ["orchestration", "run-create", "--objective", objective.slice(0, 2000), "--from", from], 60_000);
       if (!made?.runId) return null;
       this.runs.set(teamRunId, made.runId);
       return made.runId;
@@ -118,23 +133,50 @@ export class Orchestra {
   }
 
   /**
-   * Attaches an agent the plugin already started (its own surface and model) as a worker of the run, with its task.
-   * Orca injects its worker preamble into the agent's next turn, so the agent reports through `worker_done`.
+   * Registers a member's task in the run and assigns it to the agent the plugin already started (its own surface and
+   * model): `task-create`, then `dispatch` without `--inject`, so Orca records who works on what without typing another
+   * turn into the agent (`worker-start` would queue the spec as a second task). The member reports through its own team
+   * tool, which also sends Orca's `worker_done` from its shell (see `workerDone`).
    */
   async startWorker(input: { runId: string; leadId: string; handle: string; title: string; spec: string; workspacePath: string }): Promise<Dispatch | null> {
     if (!this.enabled()) return null;
     const from = this.lead(input.leadId);
     if (!from) return null;
     try {
-      const result = await this.adapter.runCli<Dispatch & { next?: string }>(
-        ["orchestration", "worker-start", "--run", input.runId, "--from", from, "--task-title", input.title.slice(0, 200), "--spec", input.spec, "--terminal", input.handle, "--worktree", `path:${input.workspacePath}`],
-        180_000,
-      );
-      if (!result?.dispatchId) return null;
-      return { dispatchId: result.dispatchId, taskId: result.taskId, runId: result.runId ?? input.runId, state: result.state ?? "ready" };
+      const task = await this.as<{ taskId?: string; task?: { id?: string } }>(from, ["orchestration", "task-create", "--spec", input.spec, "--task-title", input.title.slice(0, 200), "--run", input.runId, "--from", from], 60_000);
+      const taskId = task?.taskId ?? task?.task?.id;
+      if (!taskId) return null;
+      // A chat is named by its Orca session id; its tab handle is refused as stale.
+      const to = isChatHandle(input.handle) ? `orca_session_id:${chatSessionId(input.handle)}` : input.handle;
+      const made = await this.as<{ dispatch?: { id?: string }; dispatchId?: string }>(from, ["orchestration", "dispatch", "--task", taskId, "--to", to, "--run", input.runId, "--from", from], 60_000);
+      const dispatchId = made?.dispatch?.id ?? made?.dispatchId;
+      if (!dispatchId) return null;
+      return { dispatchId, taskId, runId: input.runId, state: "unsupervised" };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The member's own `worker_done`: sent from the member's shell (only there does Orca take it from the dispatched
+   * agent), when its `agent-team report` call is being handled. Orca settles the dispatch and shows the result in the
+   * lead's chat as an update from the worker. False when the member isn't the caller, or Orca refused it.
+   */
+  async workerDone(member: string, dispatchId: string, taskId: string, outcome: "succeeded" | "failed", subject: string, body: string): Promise<boolean> {
+    if (!this.enabled()) return false;
+    const caller = callerIs(member);
+    if (!caller) return false;
+    try {
+      await caller.exec(["orchestration", "send", "--type", "worker_done", "--task-id", taskId, "--dispatch-id", dispatchId, "--outcome", outcome, "--subject", subject.slice(0, 200), "--body", body], 60_000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A dispatch Orca only records (assigned without `--inject`) says nothing about the member's turn until it reports. */
+  static informative(dispatch: Dispatch | null): Dispatch | null {
+    return dispatch && /unsupervised|dispatched/i.test(dispatch.state) ? null : dispatch;
   }
 
   /** What Orca says about a dispatch; null when the CLI can't answer (a plugin restart, an older Orca). */
@@ -157,7 +199,8 @@ export class Orchestra {
     const from = this.lead(leadId);
     if (!from) return null;
     try {
-      const result = await this.adapter.runCli<Partial<SendResult> & { taskId?: string }>(
+      const result = await this.as<Partial<SendResult> & { taskId?: string }>(
+        from,
         ["orchestration", "send", "--from", from, "--to", `dispatch:${dispatchId}`, "--subject", subject.slice(0, 200), "--body", body],
         60_000,
       );

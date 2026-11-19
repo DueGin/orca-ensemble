@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { chatHandleFromPaneKey, chatSessionId, isChatHandle, parsePiModels, type Surface } from "../shared/agents";
+import { callerIs } from "./caller";
 
 /** The `orca` object Orca passes to the worker's activate(). Only what this plugin uses. */
 export interface OrcaWorker {
@@ -99,6 +100,8 @@ export class OrcaAdapter {
   private readonly chatsBySession = new Map<string, string>();
   /** The workspace path a message to a chat is sent from (the team's), set by the collaboration code. */
   chatHome: (handle: string) => string | null = () => null;
+  /** The lead of a chat's team (or the chat itself when it leads), set by the collaboration code. */
+  chatLead: (handle: string) => string | null = () => null;
   /** The `agent-team` command, for agents whose shell has no PATH from the launch hook (chats). */
   teamBin = "agent-team";
   private cli: string | null;
@@ -116,6 +119,15 @@ export class OrcaAdapter {
 
   get cliPath(): string | null {
     return this.cli;
+  }
+
+  /**
+   * Runs `orca <args> --json` as the agent `as` when that agent's command is being handled (from its own shell: Orca
+   * knows it as the one acting, and a launch shows in its chat as a handoff), else as the plugin.
+   */
+  cliAs<T = any>(as: string | null | undefined, args: string[], timeoutMs = 60_000): Promise<T> {
+    const caller = callerIs(as);
+    return caller ? caller.exec<T>(args, timeoutMs) : this.runCli<T>(args, timeoutMs);
   }
 
   /** Runs `orca <args> --json` against the plugin's Orca; resolves with its `result`. */
@@ -301,10 +313,10 @@ export class OrcaAdapter {
     }
   }
 
-  /** A launch's CLI call, with Orca's refusals as LaunchRefused. */
-  private async launchCli<T>(args: string[], timeoutMs: number): Promise<T> {
+  /** A launch's CLI call (as the lead when it is the one calling), with Orca's refusals as LaunchRefused. */
+  private async launchCli<T>(args: string[], timeoutMs: number, as?: string | null): Promise<T> {
     try {
-      return await this.runCli<T>(args, timeoutMs);
+      return await this.cliAs<T>(as, args, timeoutMs);
     } catch (error) {
       const message = (error as Error).message;
       const refused = launchRefusal(message);
@@ -321,13 +333,13 @@ export class OrcaAdapter {
    * Starts an agent in the workspace at `path`, as a chat or in a terminal, with an optional model, effort and first
    * prompt. Throws LaunchRefused when Orca refuses the surface or the model before starting anything.
    */
-  async launch(input: { path: string; agent: string; model?: string; effort?: string; prompt: string; focus?: boolean; surface?: Surface }): Promise<{ terminalId: string; surface: Surface }> {
+  async launch(input: { path: string; agent: string; model?: string; effort?: string; prompt: string; focus?: boolean; surface?: Surface; as?: string | null }): Promise<{ terminalId: string; surface: Surface }> {
     const surface = input.surface ?? "terminal";
     const args = ["agent", "launch", "--agent", input.agent, "--worktree", `path:${input.path}`, "--surface", surface, "--prompt", input.prompt];
     if (input.model) args.push("--model", input.model);
     if (input.model && input.effort) args.push("--effort", input.effort);
     if (input.focus) args.push("--focus");
-    const result = await this.launchCli<{ outcome: { kind: string; handle?: string }; agentTerminalHandle?: string }>(args, 120_000);
+    const result = await this.launchCli<{ outcome: { kind: string; handle?: string }; agentTerminalHandle?: string }>(args, 120_000, input.as);
     const terminalId = result.outcome?.handle ?? result.agentTerminalHandle;
     if (!terminalId) throw new Error(`Orca did not start ${input.agent}.`);
     // Orca may still open a terminal when it couldn't check that the agent can be a chat there.
@@ -337,12 +349,12 @@ export class OrcaAdapter {
   }
 
   /** Creates a worktree workspace in a project and starts the lead in it; returns the lead's terminal or chat. */
-  async createWorkspace(input: { projectPath: string; name: string; agent: string; model?: string; effort?: string; prompt: string; baseBranch?: string; surface?: Surface }): Promise<{ terminalId: string; workspaceId: string; path: string; surface: Surface }> {
+  async createWorkspace(input: { projectPath: string; name: string; agent: string; model?: string; effort?: string; prompt: string; baseBranch?: string; surface?: Surface; as?: string | null }): Promise<{ terminalId: string; workspaceId: string; path: string; surface: Surface }> {
     const args = ["worktree", "create", "--repo", `path:${input.projectPath}`, "--name", input.name, "--agent", input.agent, "--surface", input.surface ?? "terminal", "--prompt", input.prompt, "--activate"];
     if (input.model) args.push("--model", input.model);
     if (input.model && input.effort) args.push("--effort", input.effort);
     if (input.baseBranch) args.push("--base-branch", input.baseBranch);
-    const result = await this.launchCli<{ worktree: { id: string; path: string }; launch?: { outcome?: { kind?: string; handle?: string } }; agentTerminalHandle?: string }>(args, 180_000);
+    const result = await this.launchCli<{ worktree: { id: string; path: string }; launch?: { outcome?: { kind?: string; handle?: string } }; agentTerminalHandle?: string }>(args, 180_000, input.as);
     const terminalId = result.launch?.outcome?.handle ?? result.agentTerminalHandle;
     if (!terminalId) throw new Error("Orca created the workspace but did not start the lead.");
     const ran: Surface = result.launch?.outcome?.kind === "structured" || isChatHandle(terminalId) ? "chat" : "terminal";
@@ -383,6 +395,17 @@ export class OrcaAdapter {
     const home = this.chatHome(handle);
     if (!home) return false;
     const subject = (text.replace(/^\[[^\]]*\]\s*/, "").split("\n").find((line) => line.trim()) ?? "Ensemble").trim().slice(0, 80) || "Ensemble";
+    // The lead is calling: the message goes out from the lead's own shell, as the lead (no sender terminal needed).
+    const lead = this.chatLead(handle);
+    if (callerIs(lead)) {
+      try {
+        await this.cliAs(lead, ["orchestration", "send", "--to", `orca_session_id:${chatSessionId(handle)}`, "--subject", subject, "--body", text], 30_000);
+        this.noteWorking(handle);
+        return true;
+      } catch {
+        // Fall back to the workspace's sender terminal below.
+      }
+    }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const from = await this.sender(home);
       try {
@@ -404,17 +427,26 @@ export class OrcaAdapter {
 
   // ----- Models the host's agents can run
 
-  private piList: { at: number; models: string[] } | null = null;
+  private modelLists = new Map<string, { at: number; models: string[] }>();
 
-  /** pi's models as `provider/id`, from `pi --list-models` in a login shell (cached for 5 minutes); empty when pi can't be run. */
-  async piModels(): Promise<string[]> {
-    if (this.piList && Date.now() - this.piList.at < 5 * 60_000) return this.piList.models;
+  /**
+   * The models an agent lists as `provider/id`: pi and omp (which shares pi's command line) print them with
+   * `--list-models`, run in a login shell so their own PATH applies. Cached for 5 minutes; empty when it can't be run.
+   */
+  async agentModels(agent: "pi" | "omp"): Promise<string[]> {
+    const known = this.modelLists.get(agent);
+    if (known && Date.now() - known.at < 5 * 60_000) return known.models;
     const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
     const models = await new Promise<string[]>((resolve) => {
-      execFile(shell, ["-lc", "pi --list-models"], { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => resolve(error && !stdout ? [] : parsePiModels(String(stdout))));
+      execFile(shell, ["-lc", `${agent} --list-models`], { timeout: 20_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => resolve(error && !stdout ? [] : parsePiModels(String(stdout))));
     });
-    this.piList = { at: Date.now(), models };
+    this.modelLists.set(agent, { at: Date.now(), models });
     return models;
+  }
+
+  /** pi's models as `provider/id`. */
+  piModels(): Promise<string[]> {
+    return this.agentModels("pi");
   }
 
   async focusTerminal(terminalId: string): Promise<void> {

@@ -203,7 +203,7 @@ describe("delegation through agent-team", () => {
       name: "chat",
       mode: "delegation",
       lead: { agent: "claude", model: "haiku", surface: "terminal" },
-      roles: [{ name: "writer", agent: "pi", model: "qwen-max", surface: "chat", folders: ["notes"], instructions: "Writes notes." }],
+      roles: [{ name: "writer", agent: "codex", model: "gpt-5.5", surface: "chat", folders: ["notes"], instructions: "Writes notes." }],
     });
     if (!chatted.ok) throw new Error(chatted.errors.join("\n"));
     await store.setLead({ ...lead("delegation"), team: chatted.team });
@@ -211,13 +211,31 @@ describe("delegation through agent-team", () => {
     expect(delegated.isError).toBe(false);
     const launch = fake.launched[0]!;
     expect(launch.surface).toBe("chat");
-    // Orca gets the provider/id model; the bare team model was completed from the host's list.
-    expect(launch.model).toBe("fluxcode-国模/qwen-max");
     expect(LAUNCH_MARKER.test(launch.prompt)).toBe(false);
     expect(launch.prompt).toContain("'/plugins/ensemble/bin/agent-team' status");
-    expect(delegated.text).toContain("(writer, pi/qwen-max): started");
+    expect(delegated.text).toContain("(writer, codex/gpt-5.5): started");
     expect(store.member(launch.terminalId)?.surface).toBe("chat");
     expect(launch.prompt).toContain("Write notes/a.txt");
+  });
+
+  it("starts a pi member in a terminal even when its team asks for a chat, with the provider/id model", async () => {
+    const piTeam = checkTeam({
+      version: 1,
+      name: "pi",
+      mode: "delegation",
+      lead: { agent: "claude", model: "haiku", surface: "terminal" },
+      roles: [{ name: "writer", agent: "pi", model: "qwen-max", surface: "chat", folders: ["notes"], instructions: "Writes notes." }],
+    });
+    if (!piTeam.ok) throw new Error(piTeam.errors.join("\n"));
+    await store.setLead({ ...lead("delegation"), team: piTeam.team });
+    const delegated = await shim("lead1", "delegate", { tasks: [{ role: "writer", task: "Write notes/a.txt" }], title: "Docs" });
+    expect(delegated.isError).toBe(false);
+    const launch = fake.launched[0]!;
+    // pi's chat starts and does nothing: always a terminal.
+    expect(launch.surface).toBe("terminal");
+    expect(LAUNCH_MARKER.test(launch.prompt)).toBe(true);
+    // Orca gets the provider/id model; the bare team model was completed from the host's list.
+    expect(launch.model).toBe("fluxcode-国模/qwen-max");
   });
 
   it("refuses delegation in a session set to none, and locks an auto session to its first run's mode", async () => {
@@ -398,11 +416,13 @@ describe("members that ride Orca's orchestration", () => {
     expect(store.get(run.id)!.status).toBe("closed");
   });
 
-  /** Orca makes one Run when asked and takes every worker it is given: `ctx_w1`, `ctx_w2`, … in order. */
+  /** Orca makes one Run when asked, records every task, and dispatches each: tasks `task_w1`…, dispatches `ctx_w1`…. */
   const takeWorkers = () => {
-    let workers = 0;
+    let tasks = 0;
+    let dispatches = 0;
     on.responses.set("orchestration run-create", { runId: "run_orca1" });
-    on.responses.set("orchestration worker-start", (args: string[]) => (args.includes("--help") ? {} : { dispatchId: `ctx_w${++workers}`, taskId: `task_w${workers}`, runId: "run_orca1", state: "ready" }));
+    on.responses.set("orchestration task-create", () => ({ taskId: `task_w${++tasks}` }));
+    on.responses.set("orchestration dispatch", () => ({ dispatch: { id: `ctx_w${++dispatches}` } }));
   };
 
   it("attaches every member to the team run's one Orca Run as a worker, and keeps its dispatch", async () => {
@@ -418,23 +438,38 @@ describe("members that ride Orca's orchestration", () => {
     // One Run for the team run, made on the lead's behalf; the team run and each member remember it.
     expect(on.callsOf("orchestration run-create")).toEqual([["orchestration", "run-create", "--objective", `${run.id} Docs`, "--from", "lead1"]]);
     expect(run.orcaRunId).toBe("run_orca1");
-    expect(store.member(writer)).toMatchObject({ dispatchId: "ctx_w1", orcaRunId: "run_orca1" });
-    expect(store.member(checker)).toMatchObject({ dispatchId: "ctx_w2", orcaRunId: "run_orca1" });
+    expect(store.member(writer)).toMatchObject({ dispatchId: "ctx_w1", orcaTaskId: "task_w1", orcaRunId: "run_orca1" });
+    expect(store.member(checker)).toMatchObject({ dispatchId: "ctx_w2", orcaTaskId: "task_w2", orcaRunId: "run_orca1" });
 
-    // Each member is attached on its own terminal (its surface and model stay the plugin's launch), with its role: the
-    // task is already in the launch prompt, and a spec that repeated it would make the member do it twice.
-    const started = on.callsOf("orchestration worker-start");
-    expect(started).toHaveLength(2);
-    expect(started[0]).toEqual([
-      "orchestration", "worker-start", "--run", "run_orca1", "--from", "lead1",
-      "--task-title", store.member(writer)!.title, "--spec", expect.any(String),
-      "--terminal", writer, "--worktree", `path:${root}`,
-    ]);
-    const spec = started[0]![started[0]!.indexOf("--spec") + 1]!;
+    // Each member's task is recorded in the Run and dispatched to the member's own terminal (its surface and model stay
+    // the plugin's launch) without --inject: the task is already in the launch prompt, and Orca types nothing more.
+    const created = on.callsOf("orchestration task-create");
+    expect(created).toHaveLength(2);
+    expect(created[0]).toEqual(["orchestration", "task-create", "--spec", expect.any(String), "--task-title", store.member(writer)!.title, "--run", "run_orca1", "--from", "lead1"]);
+    const spec = created[0]![created[0]!.indexOf("--spec") + 1]!;
     expect(spec).toContain("Writes notes.");
     expect(spec).not.toContain("Write notes/a.txt");
-    expect(spec).toContain("agent-team report");
-    expect(started[1]).toEqual(expect.arrayContaining(["--terminal", checker]));
+    const dispatched = on.callsOf("orchestration dispatch");
+    expect(dispatched[0]).toEqual(["orchestration", "dispatch", "--task", "task_w1", "--to", writer, "--run", "run_orca1", "--from", "lead1"]);
+    expect(dispatched[1]).toEqual(expect.arrayContaining(["--to", checker]));
+    expect(dispatched.flat()).not.toContain("--inject");
+  });
+
+  it("sends a reporting member's worker_done from its own shell, so Orca settles its dispatch", async () => {
+    takeWorkers();
+    expect(await detectOrchestration(on)).toBe(true);
+    await store.setLead(lead("delegation"));
+    await shim("lead1", "delegate", { tasks: [{ role: "writer", task: "Write notes/a.txt" }], title: "Docs" });
+    const writer = on.launched[0]!.terminalId;
+    expect(store.member(writer)).toMatchObject({ dispatchId: "ctx_w1", orcaTaskId: "task_w1" });
+    const execs: string[][] = [];
+    const caller = { handle: writer, exec: async (args: string[]) => (execs.push(args), {}) };
+    const reply = await handleShim({ command: "report", input: { result: "Wrote notes/a.txt" }, terminalId: writer, workspaceId: "w", userDataPath: null, cwd: root, protocol: 2 }, caller as never);
+    expect(reply.isError).toBe(false);
+    expect(execs).toEqual([["orchestration", "send", "--type", "worker_done", "--task-id", "task_w1", "--dispatch-id", "ctx_w1", "--outcome", "succeeded", "--subject", store.member(writer)!.title, "--body", "Wrote notes/a.txt"]]);
+    // Settled by Orca: nothing left for the plugin to abandon.
+    expect(store.member(writer)?.dispatchId).toBeUndefined();
+    expect(store.leadRun("lead1", false)!.members[0]!.state).toBe("done");
   });
 
   it("keeps the plugin's own dispatch for a member Orca won't take, and says so", async () => {
@@ -558,7 +593,8 @@ describe("the launch hook", () => {
   it("ties a launch to its terminal, drops the marker, and gives Claude its standing instructions", async () => {
     await store.addLaunch({ id: "L0000ABCD", kind: "member", prompt: "the task", systemPrompt: "You are writer", member: { leadTerminalId: "lead1", role: "writer", agent: "claude", model: "haiku", title: "writer#1" }, createdAt: new Date().toISOString() });
     const event = await onAgentLaunch(deps(), { agent: "claude", workspaceId: "p::/repo", terminalId: "t9", command: `claude '--model' 'haiku' '[ensemble:L0000ABCD]\nthe task'`, env: {} });
-    expect(shellWords(event.command)).toEqual(["claude", "--model", "haiku", "--append-system-prompt", "You are writer", "the task"]);
+    // A member runs with full access: delegated work never stops on a permission prompt.
+    expect(shellWords(event.command)).toEqual(["claude", "--model", "haiku", "--append-system-prompt", "You are writer", "--dangerously-skip-permissions", "the task"]);
     expect(store.member("t9")?.role).toBe("writer");
   });
 

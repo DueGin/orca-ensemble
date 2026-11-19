@@ -415,8 +415,8 @@ export function createApi(deps: ApiDeps) {
     },
     catalog: async () => {
       // Agents and models the host can run: pi's own list (as provider/id) joins the built-in suggestions.
-      const pi = await adapter.piModels().catch(() => [] as string[]);
-      return { agents: [...KNOWN_AGENTS], models: pi.length ? { ...MODEL_SUGGESTIONS, pi } : MODEL_SUGGESTIONS, efforts: [...EFFORTS] };
+      const [pi, omp] = await Promise.all([adapter.piModels().catch(() => [] as string[]), adapter.agentModels("omp").catch(() => [] as string[])]);
+      return { agents: [...KNOWN_AGENTS], models: { ...MODEL_SUGGESTIONS, ...(pi.length ? { pi } : {}), ...(omp.length ? { omp } : {}) }, efforts: [...EFFORTS] };
     },
     validateTeam: async ({ team }: { team: unknown }) => {
       const checked = checkTeam(team);

@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { toJson } from "../shared/json";
 import { PLUGIN_MESSAGE_PREFIX } from "../shared/modes";
 import { dataDir, socketPath } from "../shared/paths";
-import type { ShimRequest } from "../shared/ipc";
+import type { ShimExec, ShimExecResult, ShimRequest } from "../shared/ipc";
+import type { Caller } from "./caller";
 import type { AppState } from "../shared/views";
 import { OrcaAdapter, type OrcaWorker } from "./adapter";
 import { createApi } from "./api";
@@ -142,9 +143,9 @@ export default async function activate(orca: OrcaWorker): Promise<void> {
   });
 
   // ----- The agents' `agent-team` command
-  const server = serveShim(socketPath(pluginRoot), (request) => {
+  const server = serveShim(socketPath(pluginRoot), (request, caller) => {
     if (request.terminalId) noteAgentWorking(request.terminalId);
-    return handleShim(request);
+    return handleShim(request, caller);
   }, (message) => orca.log(message));
   const stopSweep = startSweep();
 
@@ -175,8 +176,12 @@ export function deactivate(): void {
   for (const handler of deactivateHandlers.splice(0)) handler();
 }
 
-/** Serves `agent-team` on a Unix socket: one JSON request line in, one JSON response out. */
-function serveShim(path: string, handle: (request: ShimRequest) => Promise<{ text: string; isError: boolean }>, log: (message: string) => void): Server {
+/**
+ * Serves `agent-team` on a Unix socket. Protocol 1: one JSON request line in, one JSON response out. Protocol 2 (the
+ * request says `protocol: 2`): while the request is handled, the worker may send `exec` lines, which the command runs
+ * as `orca <args> --json` in its own shell and answers with `exec-result` lines; the reply line ends the connection.
+ */
+function serveShim(path: string, handle: (request: ShimRequest, caller: Caller | null) => Promise<{ text: string; isError: boolean }>, log: (message: string) => void): Server {
   try {
     unlinkSync(path);
   } catch {
@@ -184,24 +189,75 @@ function serveShim(path: string, handle: (request: ShimRequest) => Promise<{ tex
   }
   const server = createServer((socket) => {
     let buffer = "";
+    let request: ShimRequest | null = null;
+    let next = 1;
+    let closed = false;
+    const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+    const settleAll = (error: Error) => {
+      for (const [, entry] of pending) {
+        clearTimeout(entry.timer);
+        entry.reject(error);
+      }
+      pending.clear();
+    };
     socket.setEncoding("utf8");
+    socket.on("close", () => {
+      closed = true;
+      settleAll(new Error("The agent-team command went away."));
+    });
     socket.on("data", (chunk: string) => {
       buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end < 0) return;
-      const line = buffer.slice(0, end);
-      buffer = "";
-      let request: ShimRequest;
-      try {
-        request = JSON.parse(line) as ShimRequest;
-      } catch {
-        socket.end(JSON.stringify({ text: "Malformed request.", isError: true }) + "\n");
-        return;
+      for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (!line.trim()) continue;
+        if (request) {
+          // An answer to one of our exec lines.
+          let answer: ShimExecResult;
+          try {
+            answer = JSON.parse(line) as ShimExecResult;
+          } catch {
+            continue;
+          }
+          const entry = answer?.kind === "exec-result" ? pending.get(answer.id) : undefined;
+          if (!entry) continue;
+          pending.delete(answer.id);
+          clearTimeout(entry.timer);
+          if (answer.ok) entry.resolve(answer.result);
+          else entry.reject(Object.assign(new Error(answer.error || "orca CLI failed"), { code: answer.code }));
+          continue;
+        }
+        try {
+          request = JSON.parse(line) as ShimRequest;
+        } catch {
+          socket.end(JSON.stringify({ text: "Malformed request.", isError: true }) + "\n");
+          return;
+        }
+        const live = request;
+        const twoWay = (live.protocol ?? 1) >= 2 && !!live.terminalId;
+        const caller: Caller | null = twoWay
+          ? {
+              handle: live.terminalId!,
+              exec: <T,>(args: string[], timeoutMs = 120_000) =>
+                new Promise<T>((resolve, reject) => {
+                  if (closed) return reject(new Error("The agent-team command went away."));
+                  const id = next++;
+                  const timer = setTimeout(() => {
+                    pending.delete(id);
+                    reject(new Error(`orca ${args.slice(0, 2).join(" ")} timed out in the agent's shell`));
+                  }, timeoutMs + 5_000);
+                  pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+                  const message: ShimExec = { kind: "exec", id, args, timeoutMs };
+                  socket.write(JSON.stringify(message) + "\n");
+                }),
+            }
+          : null;
+        const finish = (response: { text: string; isError: boolean }) => {
+          settleAll(new Error("The request finished."));
+          if (!closed) socket.end(JSON.stringify(twoWay ? { kind: "reply", ...response } : response) + "\n");
+        };
+        void handle(live, caller).then(finish, (error) => finish({ text: String(error), isError: true }));
       }
-      void handle(request).then(
-        (response) => socket.end(JSON.stringify(response) + "\n"),
-        (error) => socket.end(JSON.stringify({ text: String(error), isError: true }) + "\n"),
-      );
     });
     socket.on("error", () => undefined);
   });

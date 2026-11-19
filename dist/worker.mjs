@@ -105,12 +105,15 @@ import { dirname, join as join2 } from "node:path";
 
 // src/shared/agents.ts
 var SURFACES = ["chat", "terminal"];
-var CHAT_AGENTS = /* @__PURE__ */ new Set(["claude", "codex", "grok", "cursor", "kimi", "copilot"]);
+var CHAT_AGENTS = /* @__PURE__ */ new Set(["claude", "codex", "omp", "grok", "cursor", "kimi", "copilot"]);
+var TERMINAL_ONLY = /* @__PURE__ */ new Set(["pi"]);
 var canChat = (agent) => CHAT_AGENTS.has(agent.trim());
-var CHAT_OFFERED = /* @__PURE__ */ new Set([...CHAT_AGENTS, "pi", "opencode"]);
+var CHAT_OFFERED = /* @__PURE__ */ new Set([...CHAT_AGENTS, "opencode"]);
 function surfaceOf(runtime) {
+  const agent = runtime.agent.trim();
+  if (TERMINAL_ONLY.has(agent)) return "terminal";
   if (runtime.surface === "chat") return "chat";
-  if (!canChat(runtime.agent)) return "terminal";
+  if (!canChat(agent)) return "terminal";
   return runtime.surface ?? "chat";
 }
 var CHAT_HANDLE_PREFIX = "structured-agent-session-";
@@ -128,6 +131,42 @@ function cliModelArgs(agent, model, effort) {
   const flags = CLI_MODEL_FLAGS[agent.trim()];
   if (!flags || !model) return null;
   return [flags.model, model, ...effort && flags.effort ? [flags.effort, effort] : []];
+}
+var FULL_ACCESS_ARGS = {
+  claude: "--dangerously-skip-permissions",
+  codebuddy: "--dangerously-skip-permissions",
+  codex: "--dangerously-bypass-approvals-and-sandbox",
+  gemini: "--yolo",
+  cursor: "--yolo",
+  kimi: "--auto",
+  "qwen-code": "--approval-mode yolo",
+  droid: "--auto high",
+  grok: "--permission-mode bypassPermissions",
+  kiro: "--trust-all-tools",
+  hermes: "--yolo",
+  copilot: "--yolo"
+};
+var AUTO_ARGS = {
+  claude: "--permission-mode auto",
+  codex: "--approve-for-me"
+};
+var wordsOf = (args) => args.split(/\s+/).filter(Boolean);
+var indexOfRun = (words, run) => words.findIndex((_, at) => run.every((word, k) => words[at + k] === word));
+function withFullAccess(agent, words, before) {
+  const full = FULL_ACCESS_ARGS[agent.trim()];
+  if (!full) return { words: [...words], added: 0 };
+  const yolo = wordsOf(full);
+  if (indexOfRun(words, yolo) >= 0) return { words: [...words], added: 0 };
+  let next = [...words];
+  let at = before;
+  const auto = AUTO_ARGS[agent.trim()] ? wordsOf(AUTO_ARGS[agent.trim()]) : [];
+  const autoAt = auto.length ? indexOfRun(next, auto) : -1;
+  if (autoAt > 0) {
+    next.splice(autoAt, auto.length);
+    if (autoAt < at) at -= auto.length;
+  }
+  next = [...next.slice(0, at), ...yolo, ...next.slice(at)];
+  return { words: next, added: next.length - words.length };
 }
 function parsePiModels(output2) {
   const models = [];
@@ -152,6 +191,20 @@ function resolvePiModel(model, known) {
   if (wanted.includes("/")) return { ok: true, model: wanted };
   const near = known.filter((entry) => entry.toLowerCase().includes(lower)).slice(0, 8);
   return { ok: false, error: "unknown", matches: near };
+}
+
+// src/worker/caller.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var callers = new AsyncLocalStorage();
+function asCaller(caller, work) {
+  return caller ? callers.run(caller, work) : work();
+}
+function currentCaller() {
+  return callers.getStore() ?? null;
+}
+function callerIs(handle) {
+  const caller = currentCaller();
+  return caller && handle && caller.handle === handle ? caller : null;
 }
 
 // src/worker/adapter.ts
@@ -205,6 +258,8 @@ var OrcaAdapter = class _OrcaAdapter {
   chatsBySession = /* @__PURE__ */ new Map();
   /** The workspace path a message to a chat is sent from (the team's), set by the collaboration code. */
   chatHome = () => null;
+  /** The lead of a chat's team (or the chat itself when it leads), set by the collaboration code. */
+  chatLead = () => null;
   /** The `agent-team` command, for agents whose shell has no PATH from the launch hook (chats). */
   teamBin = "agent-team";
   cli;
@@ -215,6 +270,14 @@ var OrcaAdapter = class _OrcaAdapter {
   }
   get cliPath() {
     return this.cli;
+  }
+  /**
+   * Runs `orca <args> --json` as the agent `as` when that agent's command is being handled (from its own shell: Orca
+   * knows it as the one acting, and a launch shows in its chat as a handoff), else as the plugin.
+   */
+  cliAs(as, args, timeoutMs = 6e4) {
+    const caller = callerIs(as);
+    return caller ? caller.exec(args, timeoutMs) : this.runCli(args, timeoutMs);
   }
   /** Runs `orca <args> --json` against the plugin's Orca; resolves with its `result`. */
   runCli(args, timeoutMs = 6e4) {
@@ -379,10 +442,10 @@ var OrcaAdapter = class _OrcaAdapter {
       }
     }
   }
-  /** A launch's CLI call, with Orca's refusals as LaunchRefused. */
-  async launchCli(args, timeoutMs) {
+  /** A launch's CLI call (as the lead when it is the one calling), with Orca's refusals as LaunchRefused. */
+  async launchCli(args, timeoutMs, as) {
     try {
-      return await this.runCli(args, timeoutMs);
+      return await this.cliAs(as, args, timeoutMs);
     } catch (error62) {
       const message = error62.message;
       const refused = launchRefusal(message);
@@ -403,7 +466,7 @@ var OrcaAdapter = class _OrcaAdapter {
     if (input2.model) args.push("--model", input2.model);
     if (input2.model && input2.effort) args.push("--effort", input2.effort);
     if (input2.focus) args.push("--focus");
-    const result = await this.launchCli(args, 12e4);
+    const result = await this.launchCli(args, 12e4, input2.as);
     const terminalId = result.outcome?.handle ?? result.agentTerminalHandle;
     if (!terminalId) throw new Error(`Orca did not start ${input2.agent}.`);
     const ran = result.outcome?.kind === "structured" || isChatHandle(terminalId) ? "chat" : "terminal";
@@ -416,7 +479,7 @@ var OrcaAdapter = class _OrcaAdapter {
     if (input2.model) args.push("--model", input2.model);
     if (input2.model && input2.effort) args.push("--effort", input2.effort);
     if (input2.baseBranch) args.push("--base-branch", input2.baseBranch);
-    const result = await this.launchCli(args, 18e4);
+    const result = await this.launchCli(args, 18e4, input2.as);
     const terminalId = result.launch?.outcome?.handle ?? result.agentTerminalHandle;
     if (!terminalId) throw new Error("Orca created the workspace but did not start the lead.");
     const ran = result.launch?.outcome?.kind === "structured" || isChatHandle(terminalId) ? "chat" : "terminal";
@@ -453,6 +516,15 @@ var OrcaAdapter = class _OrcaAdapter {
     const home = this.chatHome(handle);
     if (!home) return false;
     const subject = (text.replace(/^\[[^\]]*\]\s*/, "").split("\n").find((line) => line.trim()) ?? "Ensemble").trim().slice(0, 80) || "Ensemble";
+    const lead = this.chatLead(handle);
+    if (callerIs(lead)) {
+      try {
+        await this.cliAs(lead, ["orchestration", "send", "--to", `orca_session_id:${chatSessionId(handle)}`, "--subject", subject, "--body", text], 3e4);
+        this.noteWorking(handle);
+        return true;
+      } catch {
+      }
+    }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const from = await this.sender(home);
       try {
@@ -472,16 +544,24 @@ var OrcaAdapter = class _OrcaAdapter {
     return false;
   }
   // ----- Models the host's agents can run
-  piList = null;
-  /** pi's models as `provider/id`, from `pi --list-models` in a login shell (cached for 5 minutes); empty when pi can't be run. */
-  async piModels() {
-    if (this.piList && Date.now() - this.piList.at < 5 * 6e4) return this.piList.models;
+  modelLists = /* @__PURE__ */ new Map();
+  /**
+   * The models an agent lists as `provider/id`: pi and omp (which shares pi's command line) print them with
+   * `--list-models`, run in a login shell so their own PATH applies. Cached for 5 minutes; empty when it can't be run.
+   */
+  async agentModels(agent) {
+    const known = this.modelLists.get(agent);
+    if (known && Date.now() - known.at < 5 * 6e4) return known.models;
     const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
     const models = await new Promise((resolve) => {
-      execFile(shell, ["-lc", "pi --list-models"], { timeout: 2e4, maxBuffer: 4 * 1024 * 1024 }, (error62, stdout) => resolve(error62 && !stdout ? [] : parsePiModels(String(stdout))));
+      execFile(shell, ["-lc", `${agent} --list-models`], { timeout: 2e4, maxBuffer: 4 * 1024 * 1024 }, (error62, stdout) => resolve(error62 && !stdout ? [] : parsePiModels(String(stdout))));
     });
-    this.piList = { at: Date.now(), models };
+    this.modelLists.set(agent, { at: Date.now(), models });
     return models;
+  }
+  /** pi's models as `provider/id`. */
+  piModels() {
+    return this.agentModels("pi");
   }
   async focusTerminal(terminalId) {
     await this.orca.host.call("terminal.focus", { terminalId }).catch(() => this.runCli(["terminal", "switch", "--terminal", terminalId]).catch(() => void 0));
@@ -20855,6 +20935,7 @@ var TEAM_SUFFIX = ".team.json";
 var KNOWN_AGENTS = [
   "claude",
   "codex",
+  "omp",
   "gemini",
   "opencode",
   "pi",
@@ -21775,6 +21856,18 @@ var Orchestra = class {
     this.lead = lead;
   }
   runs = /* @__PURE__ */ new Map();
+  /**
+   * Runs an orchestration call "from" the lead. When the lead's own command is being handled it runs in the lead's
+   * shell, where Orca knows the lead by its environment: no \`--from\` (which a chat can't be named in). Otherwise the
+   * plugin runs it naming the lead's terminal.
+   */
+  as(from, args, timeoutMs) {
+    const caller = callerIs(from);
+    if (!caller) return this.adapter.runCli(args, timeoutMs);
+    const at = args.indexOf("--from");
+    const own2 = at >= 0 ? [...args.slice(0, at), ...args.slice(at + 2)] : args;
+    return caller.exec(own2, timeoutMs);
+  }
   enabled() {
     return orchestrationSupported(this.adapter);
   }
@@ -21804,7 +21897,7 @@ var Orchestra = class {
     const from = this.lead(leadId);
     if (!from) return null;
     try {
-      const made = await this.adapter.runCli(["orchestration", "run-create", "--objective", objective.slice(0, 2e3), "--from", from], 6e4);
+      const made = await this.as(from, ["orchestration", "run-create", "--objective", objective.slice(0, 2e3), "--from", from], 6e4);
       if (!made?.runId) return null;
       this.runs.set(teamRunId, made.runId);
       return made.runId;
@@ -21817,23 +21910,47 @@ var Orchestra = class {
     this.runs.set(teamRunId, runId);
   }
   /**
-   * Attaches an agent the plugin already started (its own surface and model) as a worker of the run, with its task.
-   * Orca injects its worker preamble into the agent's next turn, so the agent reports through `worker_done`.
+   * Registers a member's task in the run and assigns it to the agent the plugin already started (its own surface and
+   * model): `task-create`, then `dispatch` without `--inject`, so Orca records who works on what without typing another
+   * turn into the agent (`worker-start` would queue the spec as a second task). The member reports through its own team
+   * tool, which also sends Orca's `worker_done` from its shell (see `workerDone`).
    */
   async startWorker(input2) {
     if (!this.enabled()) return null;
     const from = this.lead(input2.leadId);
     if (!from) return null;
     try {
-      const result = await this.adapter.runCli(
-        ["orchestration", "worker-start", "--run", input2.runId, "--from", from, "--task-title", input2.title.slice(0, 200), "--spec", input2.spec, "--terminal", input2.handle, "--worktree", `path:${input2.workspacePath}`],
-        18e4
-      );
-      if (!result?.dispatchId) return null;
-      return { dispatchId: result.dispatchId, taskId: result.taskId, runId: result.runId ?? input2.runId, state: result.state ?? "ready" };
+      const task = await this.as(from, ["orchestration", "task-create", "--spec", input2.spec, "--task-title", input2.title.slice(0, 200), "--run", input2.runId, "--from", from], 6e4);
+      const taskId = task?.taskId ?? task?.task?.id;
+      if (!taskId) return null;
+      const to = isChatHandle(input2.handle) ? `orca_session_id:${chatSessionId(input2.handle)}` : input2.handle;
+      const made = await this.as(from, ["orchestration", "dispatch", "--task", taskId, "--to", to, "--run", input2.runId, "--from", from], 6e4);
+      const dispatchId = made?.dispatch?.id ?? made?.dispatchId;
+      if (!dispatchId) return null;
+      return { dispatchId, taskId, runId: input2.runId, state: "unsupervised" };
     } catch {
       return null;
     }
+  }
+  /**
+   * The member's own `worker_done`: sent from the member's shell (only there does Orca take it from the dispatched
+   * agent), when its `agent-team report` call is being handled. Orca settles the dispatch and shows the result in the
+   * lead's chat as an update from the worker. False when the member isn't the caller, or Orca refused it.
+   */
+  async workerDone(member, dispatchId, taskId, outcome, subject, body) {
+    if (!this.enabled()) return false;
+    const caller = callerIs(member);
+    if (!caller) return false;
+    try {
+      await caller.exec(["orchestration", "send", "--type", "worker_done", "--task-id", taskId, "--dispatch-id", dispatchId, "--outcome", outcome, "--subject", subject.slice(0, 200), "--body", body], 6e4);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** A dispatch Orca only records (assigned without `--inject`) says nothing about the member's turn until it reports. */
+  static informative(dispatch2) {
+    return dispatch2 && /unsupervised|dispatched/i.test(dispatch2.state) ? null : dispatch2;
   }
   /** What Orca says about a dispatch; null when the CLI can't answer (a plugin restart, an older Orca). */
   async show(dispatchId) {
@@ -21854,7 +21971,8 @@ var Orchestra = class {
     const from = this.lead(leadId);
     if (!from) return null;
     try {
-      const result = await this.adapter.runCli(
+      const result = await this.as(
+        from,
         ["orchestration", "send", "--from", from, "--to", `dispatch:${dispatchId}`, "--subject", subject.slice(0, 200), "--body", body],
         6e4
       );
@@ -21907,11 +22025,11 @@ var Orchestra = class {
 };
 
 // src/worker/store.ts
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage as AsyncLocalStorage2 } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
 import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join as join3 } from "node:path";
-var actors = new AsyncLocalStorage();
+var actors = new AsyncLocalStorage2();
 var asActor = (actor, work) => actors.run(actor, work);
 async function writeAtomic(file2, text) {
   const temp = `${file2}.${process.pid}.${Date.now()}.tmp`;
@@ -22249,6 +22367,7 @@ function initCollaboration(adapter, runs, readTeam, teamBin = "agent-team") {
   resetOrchestrationSupport();
   void detectOrchestration(adapter).then((on) => adapter.orca.log(`[ensemble] Orca orchestration ${on ? "on: members ride Orca's Runs" : "not available: members are dispatched by the plugin"}`)).catch(() => void 0);
   adapter.teamBin = teamBin;
+  adapter.chatLead = (handle) => store.lead(handle) ? handle : store.member(handle)?.leadTerminalId ?? null;
   adapter.chatHome = (handle) => {
     const member = store.member(handle);
     return store.lead(handle)?.path ?? (member ? store.lead(member.leadTerminalId)?.path : null) ?? null;
@@ -22359,32 +22478,40 @@ ${P.memberStartPrompt(ctx.team, spec, prompt)}`;
   let notes = [];
   let started;
   try {
-    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted });
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted, as: leadId });
   } catch (error62) {
     if (!(error62 instanceof LaunchRefused) || wanted !== "chat") throw error62;
     notes = [lang === "zh" ? `${spec.name}\uFF1AOrca \u8FD9\u4E2A\u7248\u672C\u4E0D\u80FD\u4EE5\u56FE\u5F62\u754C\u9762\u6253\u5F00 ${spec.agent}\uFF0C\u6539\u7528\u547D\u4EE4\u884C\uFF08\u7EC8\u7AEF\uFF09\u3002` : `${spec.name}: this Orca cannot open ${spec.agent} as a chat here; started it in a terminal instead.`];
-    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal" });
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal", as: leadId });
   }
   const { terminalId } = started;
   const ran = started.surface;
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
   void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
-  const teamRun = store.leadRun(leadId, true);
-  if (orchestra?.enabled() && teamRun) {
-    const orcaRun = teamRun.orcaRunId ?? await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`);
-    if (orcaRun) {
-      const dispatch2 = await orchestra.startWorker({ runId: orcaRun, leadId, handle: terminalId, title, spec: specBrief(spec), workspacePath: ctx.lead.path });
-      const current = store.member(terminalId);
-      if (dispatch2) {
-        if (current) await store.setMember({ ...current, dispatchId: dispatch2.dispatchId, orcaRunId: orcaRun });
-        if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current2) => ({ ...current2, orcaRunId: orcaRun }));
-      } else {
-        notes.push(lang === "zh" ? `${spec.name}\uFF1AOrca \u7F16\u6392\u6CA1\u6709\u63A5\u7BA1\u8FD9\u4E2A\u6210\u5458\uFF0C\u63D2\u4EF6\u81EA\u5DF1\u6D3E\u53D1\u3002` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`);
-      }
-    }
-  }
   return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
+}
+async function attachWorker(ctx, leadId, member, spec, lang) {
+  const teamRun = store.leadRun(leadId, true);
+  if (!orchestra?.enabled() || !teamRun || teamRun.mode !== "delegation") return null;
+  const earlier = store.member(member.agentId);
+  if (earlier?.dispatchId) {
+    await orchestra.abandon(earlier.dispatchId).catch(() => void 0);
+    await store.setMember({ ...earlier, dispatchId: void 0, orcaTaskId: void 0 });
+  }
+  const orcaRun = teamRun.orcaRunId ?? await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`);
+  if (!orcaRun) return null;
+  if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current2) => ({ ...current2, orcaRunId: orcaRun }));
+  const dispatch2 = await orchestra.startWorker({ runId: orcaRun, leadId, handle: member.agentId, title: member.title, spec: specBrief(spec), workspacePath: ctx.lead.path });
+  if (!dispatch2) return lang === "zh" ? `${spec.name}\uFF1AOrca \u7F16\u6392\u6CA1\u6709\u63A5\u7BA1\u8FD9\u4E2A\u6210\u5458\uFF0C\u63D2\u4EF6\u81EA\u5DF1\u6D3E\u53D1\u3002` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`;
+  const live = memberOf(store.get(teamRun.id) ?? teamRun, member.agentId);
+  if (live && live.state !== "working" && live.state !== "attention") {
+    await orchestra.abandon(dispatch2.dispatchId).catch(() => void 0);
+    return null;
+  }
+  const current = store.member(member.agentId);
+  if (current) await store.setMember({ ...current, dispatchId: dispatch2.dispatchId, orcaTaskId: dispatch2.taskId, orcaRunId: orcaRun });
+  return null;
 }
 async function resolveModel(model) {
   const choice = resolvePiModel(model, await orca().piModels());
@@ -22515,6 +22642,7 @@ async function staff(runId) {
         const reopened = roundComplete(latest) && latest.notifiedRound >= latest.round ? { ...latest, round: latest.round + 1, rounds: Math.max(latest.rounds, latest.round + 1) } : latest;
         return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${started.title}\uFF08${spec.name}\uFF09\u4E3A\u5B83\u7684\u5F85\u529E\u4EFB\u52A1\u52A0\u5165\u4E86\u8FD0\u884C\u3002` : `${started.title} (${spec.name}) joined the run for its open tasks.`, to: [], files: [] }, now()).run;
       });
+      if (!started.continued) await attachWorker(ctx, run.leadAgentId, started, spec, current.language);
     } catch (error62) {
       console.error(`[ensemble] run ${runId}: could not staff ${role}`, error62);
     } finally {
@@ -22651,7 +22779,7 @@ async function reconcile(runId) {
     if (Date.now() - Date.parse(member.dispatchedAt) < 3e4) continue;
     const session = store.member(member.agentId);
     if (orchestra?.governs(session) && session.dispatchId) {
-      const dispatch2 = await orchestra.show(session.dispatchId);
+      const dispatch2 = Orchestra.informative(await orchestra.show(session.dispatchId));
       if (dispatch2) {
         const settled = Orchestra.settled(dispatch2);
         if (settled.settled) {
@@ -22725,7 +22853,7 @@ async function onAgentStatus(payload) {
     if (payload.state === "done" && (member.state === "working" || member.state === "attention")) {
       const session = store.member(terminalId);
       let dispatch2 = null;
-      if (orchestra?.governs(session)) dispatch2 = await orchestra.show(session.dispatchId);
+      if (orchestra?.governs(session)) dispatch2 = Orchestra.informative(await orchestra.show(session.dispatchId));
       if (dispatch2) {
         if (Orchestra.settled(dispatch2).settled) {
           const message = reports.get(terminalId) ?? await lastMessage(terminalId);
@@ -23104,6 +23232,8 @@ ${task}` : task), lang);
           run = await store.log(run.id, [contextEvent(started.agentId, spec, started.continued)]);
           lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
           if (started.note) lines.push(`  ${started.note}`);
+          const attached = await attachWorker(ctx, agent.id, started, spec, lang);
+          if (attached) lines.push(`  ${attached}`);
         } catch (error62) {
           lines.push(`- ${spec.name}: ${tr("not started", "\u672A\u542F\u52A8")}: ${error62 instanceof Error ? error62.message : String(error62)}`);
         }
@@ -23221,6 +23351,8 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
             run = await store.mutate(run.id, (current) => upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()));
             lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
             if (started.note) lines.push(`  ${started.note}`);
+            const attached = started.continued ? null : await attachWorker(ctx, agent.id, started, spec, lang);
+            if (attached) lines.push(`  ${attached}`);
           } catch (error62) {
             lines.push(`- ${spec.name}: ${tr("not started", "\u672A\u542F\u52A8")}: ${error62 instanceof Error ? error62.message : String(error62)}`);
           }
@@ -23773,6 +23905,11 @@ Answer with ${L.broadcast} or ${L.send}; ask the user first when it changes the 
       } else {
         await store.mutate(run.id, (current) => amendReport(current, agent.id, result), { trace: false });
       }
+      const session = store.member(agent.id);
+      if (orchestra?.holds(session) && session.orcaTaskId) {
+        const done = await orchestra.workerDone(agent.id, session.dispatchId, session.orcaTaskId, "succeeded", member.title, excerpt(result, 4e3));
+        if (done) await store.setMember({ ...session, dispatchId: void 0, orcaTaskId: void 0 });
+      }
       return ok(tr("The lead has your report. End your turn now.", "\u534F\u8C03\u5668\u5DF2\u6536\u5230\u4F60\u7684\u6C47\u62A5\u3002\u8BF7\u73B0\u5728\u7ED3\u675F\u672C\u8F6E\u3002"));
     }
   });
@@ -23799,7 +23936,7 @@ function fieldsOf(schema) {
   }
 }
 var shown = /* @__PURE__ */ new Set();
-async function handleShim(request) {
+async function handleShim(request, caller = null) {
   await store.load();
   const terminalId = request.terminalId;
   if (!terminalId) return { isError: true, text: "agent-team runs only inside Orca, in a terminal or a chat: neither ORCA_TERMINAL_HANDLE nor ORCA_AGENT_SESSION_ID is set." };
@@ -23840,7 +23977,7 @@ ${fieldsOf(tool.input).join("\n")}` };
   const controller = new AbortController();
   const actor = lead ? "lead" : terminalId;
   try {
-    const result = await asActor(actor, () => tool.execute(parsed.data, { agent: { id: terminalId, workspaceId: request.workspaceId }, signal: controller.signal }));
+    const result = await asCaller(caller, () => asActor(actor, () => tool.execute(parsed.data, { agent: { id: terminalId, workspaceId: request.workspaceId }, signal: controller.signal })));
     let text = result.text ?? "";
     if (lead && tool.name === LEAD_TOOLS.status && (!shown.has(terminalId) || request.input?.instructions === true)) {
       shown.add(terminalId);
@@ -24293,8 +24430,8 @@ ${prompt}`, focus: false });
       return { ok: true };
     },
     catalog: async () => {
-      const pi = await adapter.piModels().catch(() => []);
-      return { agents: [...KNOWN_AGENTS], models: pi.length ? { ...MODEL_SUGGESTIONS, pi } : MODEL_SUGGESTIONS, efforts: [...EFFORTS] };
+      const [pi, omp] = await Promise.all([adapter.piModels().catch(() => []), adapter.agentModels("omp").catch(() => [])]);
+      return { agents: [...KNOWN_AGENTS], models: { ...MODEL_SUGGESTIONS, ...pi.length ? { pi } : {}, ...omp.length ? { omp } : {} }, efforts: [...EFFORTS] };
     },
     validateTeam: async ({ team }) => {
       const checked = checkTeam(team);
@@ -24433,10 +24570,12 @@ async function onAgentLaunch(deps, event) {
   let systemPrompt = "";
   const marker = word.match(LAUNCH_MARKER);
   let cliArgs = [];
+  let member = false;
   if (marker) {
     const launch = deps.store.takeLaunch(marker[1]);
     prompt = word.replace(LAUNCH_MARKER, "");
     cliArgs = cliModelArgs(event.agent, launch?.model, launch?.effort) ?? [];
+    member = launch?.kind === "member";
     if (launch) {
       systemPrompt = launch.systemPrompt;
       if (launch.kind === "member" && launch.member) await deps.store.setMember({ terminalId: event.terminalId, ...launch.member, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
@@ -24459,9 +24598,15 @@ ${PLUGIN_MESSAGE_PREFIX} ${made.note}` : "");
       }
     }
   }
-  const next = [...words];
+  let next = [...words];
   next.splice(promptIndex, 0, ...cliArgs);
-  next[promptIndex + cliArgs.length] = prompt;
+  let at = promptIndex + cliArgs.length;
+  next[at] = prompt;
+  if (member) {
+    const full = withFullAccess(event.agent, next, at);
+    next = full.words;
+    at += full.added;
+  }
   if (systemPrompt && event.agent === "claude" && !next.includes("--append-system-prompt")) next.splice(promptIndex, 0, "--append-system-prompt", systemPrompt);
   return { ...event, env, command: next.map((entry, index) => index === 0 && /^[A-Za-z0-9._/-]+$/.test(entry) ? entry : shellQuote(entry)).join(" ") };
 }
@@ -24587,9 +24732,9 @@ async function activate(orca2) {
     await orca2.host.call("commands.run", { action: "sidebar.right.toggle" }).catch(() => void 0);
     return locale.startsWith("zh") ? "\u5728\u53F3\u4FA7\u300C\u667A\u80FD\u4F53\u56E2\u961F\u300D\u9762\u677F\u91CC\u9009\u62E9\u56E2\u961F\u5E76\u5F00\u59CB\u3002\u4E5F\u53EF\u4EE5\u5728\u65B0 agent \u7684\u7B2C\u4E00\u6761\u6D88\u606F\u5F00\u5934\u5199 @team\u3002" : "Pick a team in the Ensemble panel on the right and start. You can also begin a new agent's first prompt with @team.";
   });
-  const server = serveShim(socketPath(pluginRoot), (request) => {
+  const server = serveShim(socketPath(pluginRoot), (request, caller) => {
     if (request.terminalId) noteAgentWorking(request.terminalId);
-    return handleShim(request);
+    return handleShim(request, caller);
   }, (message) => orca2.log(message));
   const stopSweep = startSweep();
   const liveness = setInterval(() => {
@@ -24621,24 +24766,71 @@ function serveShim(path, handle, log) {
   }
   const server = createServer((socket) => {
     let buffer = "";
+    let request = null;
+    let next = 1;
+    let closed = false;
+    const pending = /* @__PURE__ */ new Map();
+    const settleAll = (error62) => {
+      for (const [, entry] of pending) {
+        clearTimeout(entry.timer);
+        entry.reject(error62);
+      }
+      pending.clear();
+    };
     socket.setEncoding("utf8");
+    socket.on("close", () => {
+      closed = true;
+      settleAll(new Error("The agent-team command went away."));
+    });
     socket.on("data", (chunk) => {
       buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end < 0) return;
-      const line = buffer.slice(0, end);
-      buffer = "";
-      let request;
-      try {
-        request = JSON.parse(line);
-      } catch {
-        socket.end(JSON.stringify({ text: "Malformed request.", isError: true }) + "\n");
-        return;
+      for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (!line.trim()) continue;
+        if (request) {
+          let answer;
+          try {
+            answer = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          const entry = answer?.kind === "exec-result" ? pending.get(answer.id) : void 0;
+          if (!entry) continue;
+          pending.delete(answer.id);
+          clearTimeout(entry.timer);
+          if (answer.ok) entry.resolve(answer.result);
+          else entry.reject(Object.assign(new Error(answer.error || "orca CLI failed"), { code: answer.code }));
+          continue;
+        }
+        try {
+          request = JSON.parse(line);
+        } catch {
+          socket.end(JSON.stringify({ text: "Malformed request.", isError: true }) + "\n");
+          return;
+        }
+        const live = request;
+        const twoWay = (live.protocol ?? 1) >= 2 && !!live.terminalId;
+        const caller = twoWay ? {
+          handle: live.terminalId,
+          exec: (args, timeoutMs = 12e4) => new Promise((resolve, reject) => {
+            if (closed) return reject(new Error("The agent-team command went away."));
+            const id = next++;
+            const timer = setTimeout(() => {
+              pending.delete(id);
+              reject(new Error(`orca ${args.slice(0, 2).join(" ")} timed out in the agent's shell`));
+            }, timeoutMs + 5e3);
+            pending.set(id, { resolve, reject, timer });
+            const message = { kind: "exec", id, args, timeoutMs };
+            socket.write(JSON.stringify(message) + "\n");
+          })
+        } : null;
+        const finish = (response) => {
+          settleAll(new Error("The request finished."));
+          if (!closed) socket.end(JSON.stringify(twoWay ? { kind: "reply", ...response } : response) + "\n");
+        };
+        void handle(live, caller).then(finish, (error62) => finish({ text: String(error62), isError: true }));
       }
-      void handle(request).then(
-        (response) => socket.end(JSON.stringify(response) + "\n"),
-        (error62) => socket.end(JSON.stringify({ text: String(error62), isError: true }) + "\n")
-      );
     });
     socket.on("error", () => void 0);
   });

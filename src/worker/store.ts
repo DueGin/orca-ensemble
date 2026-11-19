@@ -59,6 +59,8 @@ export interface MemberSession {
   /** Its worker in Orca's orchestration: the dispatch Orca supervises, and the team run's Orca Run. */
   dispatchId?: string;
   orcaRunId?: string;
+  /** The Orca task its dispatch is for: its `worker_done` names it. */
+  orcaTaskId?: string;
   title: string;
   createdAt: string;
 }

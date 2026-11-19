@@ -1,27 +1,32 @@
 // How Orca runs each agent: as a chat (Orca's own graphical client) or in a terminal, which model ids it takes, and how
-// a chat is named. Orca 1.4.261 opens claude, codex, pi, opencode and grok as chats; cursor, kimi and copilot have a chat
-// client too but need their CLI on the host. Other agents (gemini, qwen-code, droid, ...) only run in a terminal.
+// a chat is named. claude, codex, omp and grok work as chats and default to one; opencode can be one; cursor, kimi and
+// copilot have a chat client that needs their CLI on the host. pi's chat starts and does nothing, so pi always runs in a
+// terminal; gemini, qwen-code, droid and the rest have no chat.
 
 /** Where an agent runs: Orca's chat (graphical) client, or its CLI in a terminal. */
 export const SURFACES = ["chat", "terminal"] as const;
 export type Surface = (typeof SURFACES)[number];
 
 /**
- * Agents whose chat is both offered by Orca and working: a team runs them as chats unless it says otherwise. A launch
- * Orca refuses as a chat falls back to a terminal. pi, opencode and the rest can still be asked for as chats, but they
- * default to terminals: a pi chat starts and stays idle (Orca 1.4.261), so work given to it never runs.
+ * Agents whose chat works: a team runs them as chats unless it says otherwise. A launch Orca refuses as a chat falls
+ * back to a terminal.
  */
-export const CHAT_AGENTS: ReadonlySet<string> = new Set(["claude", "codex", "grok", "cursor", "kimi", "copilot"]);
+export const CHAT_AGENTS: ReadonlySet<string> = new Set(["claude", "codex", "omp", "grok", "cursor", "kimi", "copilot"]);
+
+/** Agents whose chat starts but does no work (pi, Orca 1.4.261): always a terminal, whatever a team says. */
+export const TERMINAL_ONLY: ReadonlySet<string> = new Set(["pi"]);
 
 export const canChat = (agent: string): boolean => CHAT_AGENTS.has(agent.trim());
 
-/** Agents Orca can open as a chat at all, whether or not its chat works for them: the editor offers the choice for these. */
-export const CHAT_OFFERED: ReadonlySet<string> = new Set([...CHAT_AGENTS, "pi", "opencode"]);
+/** Agents the editor offers the chat-or-terminal choice for: the ones above, and opencode (a terminal unless chosen). */
+export const CHAT_OFFERED: ReadonlySet<string> = new Set([...CHAT_AGENTS, "opencode"]);
 
-/** Where an agent runs: a chat when the team asks for one, else its choice, else a chat when its chat works, else a terminal. */
+/** Where an agent runs: never a chat for a terminal-only agent; else a chat when asked, else a chat when its chat works. */
 export function surfaceOf(runtime: { agent: string; surface?: Surface | null }): Surface {
+  const agent = runtime.agent.trim();
+  if (TERMINAL_ONLY.has(agent)) return "terminal";
   if (runtime.surface === "chat") return "chat";
-  if (!canChat(runtime.agent)) return "terminal";
+  if (!canChat(agent)) return "terminal";
   return runtime.surface ?? "chat";
 }
 
@@ -64,6 +69,58 @@ export function cliModelArgs(agent: string, model: string | undefined, effort: s
   const flags = CLI_MODEL_FLAGS[agent.trim()];
   if (!flags || !model) return null;
   return [flags.model, model, ...(effort && flags.effort ? [flags.effort, effort] : [])];
+}
+
+// ----- Members run with full access
+
+/**
+ * The arguments that run an agent's CLI with full access, as Orca's own Agent Permissions use them ("Full access").
+ * A member the plugin starts in a terminal gets them, so delegated work never stops on a permission prompt. A chat's
+ * permission is Orca's per-agent setting (Settings → Agents), which a launch can't change.
+ */
+export const FULL_ACCESS_ARGS: Readonly<Record<string, string>> = {
+  claude: "--dangerously-skip-permissions",
+  codebuddy: "--dangerously-skip-permissions",
+  codex: "--dangerously-bypass-approvals-and-sandbox",
+  gemini: "--yolo",
+  cursor: "--yolo",
+  kimi: "--auto",
+  "qwen-code": "--approval-mode yolo",
+  droid: "--auto high",
+  grok: "--permission-mode bypassPermissions",
+  kiro: "--trust-all-tools",
+  hermes: "--yolo",
+  copilot: "--yolo",
+};
+
+/** Orca's "Auto" arguments, which full access replaces. */
+const AUTO_ARGS: Readonly<Record<string, string>> = {
+  claude: "--permission-mode auto",
+  codex: "--approve-for-me",
+};
+
+const wordsOf = (args: string) => args.split(/\s+/).filter(Boolean);
+const indexOfRun = (words: readonly string[], run: readonly string[]) => words.findIndex((_, at) => run.every((word, k) => words[at + k] === word));
+
+/**
+ * A command's words with the agent's full-access arguments, put before `before` (the prompt): unchanged when they are
+ * there already or the agent has none; Orca's Auto arguments for it are taken out.
+ */
+export function withFullAccess(agent: string, words: readonly string[], before: number): { words: string[]; added: number } {
+  const full = FULL_ACCESS_ARGS[agent.trim()];
+  if (!full) return { words: [...words], added: 0 };
+  const yolo = wordsOf(full);
+  if (indexOfRun(words, yolo) >= 0) return { words: [...words], added: 0 };
+  let next = [...words];
+  let at = before;
+  const auto = AUTO_ARGS[agent.trim()] ? wordsOf(AUTO_ARGS[agent.trim()]!) : [];
+  const autoAt = auto.length ? indexOfRun(next, auto) : -1;
+  if (autoAt > 0) {
+    next.splice(autoAt, auto.length);
+    if (autoAt < at) at -= auto.length;
+  }
+  next = [...next.slice(0, at), ...yolo, ...next.slice(at)];
+  return { words: next, added: next.length - words.length };
 }
 
 // ----- pi's models

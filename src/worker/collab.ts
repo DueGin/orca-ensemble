@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { resolvePiModel, surfaceOf, type Surface } from "../shared/agents";
 import { LaunchRefused, type OrcaAdapter } from "./adapter";
+import { asCaller, type Caller as ShellCaller } from "./caller";
 import { detectOrchestration, Orchestra, resetOrchestrationSupport } from "./orchestra";
 import { asActor, newLaunchId, type LeadSession, type SessionRole, type Store } from "./store";
 import { claudeTranscript, claudeTurn, lastReplyFromScreen, typedAfter } from "./transcripts";
@@ -77,6 +78,8 @@ export function initCollaboration(adapter: OrcaAdapter, runs: Store, readTeam: t
   resetOrchestrationSupport();
   void detectOrchestration(adapter).then((on) => adapter.orca.log(`[ensemble] Orca orchestration ${on ? "on: members ride Orca's Runs" : "not available: members are dispatched by the plugin"}`)).catch(() => undefined);
   adapter.teamBin = teamBin;
+  // A chat's team lead: the chat itself when it leads, else its member's lead.
+  adapter.chatLead = (handle) => (store.lead(handle) ? handle : store.member(handle)?.leadTerminalId ?? null);
   // Mail to a chat leaves from the team's workspace: the lead's path, else its member's.
   adapter.chatHome = (handle) => {
     const member = store.member(handle);
@@ -249,38 +252,53 @@ async function dispatch(ctx: LeadContext, leadId: string, spec: MemberSpec, prom
   let notes: string[] = [];
   let started: { terminalId: string; surface: Surface };
   try {
-    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted });
+    // As the lead when it is the one calling: the launch then shows in its chat as a handoff to this member.
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: wanted === "chat" ? forChat : forTerminal, surface: wanted, as: leadId });
   } catch (error) {
     if (!(error instanceof LaunchRefused) || wanted !== "chat") throw error;
     notes = [lang === "zh" ? `${spec.name}：Orca 这个版本不能以图形界面打开 ${spec.agent}，改用命令行（终端）。` : `${spec.name}: this Orca cannot open ${spec.agent} as a chat here; started it in a terminal instead.`];
-    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal" });
+    started = await orca().launch({ path: ctx.lead.path, agent: spec.agent, model, effort: spec.effort, prompt: forTerminal, surface: "terminal", as: leadId });
   }
   const { terminalId } = started;
   const ran = started.surface;
   if (!store.member(terminalId)) await store.setMember({ terminalId, ...member, surface: ran, createdAt: now() });
   void orca().rename(terminalId, title);
   seenWorking.delete(terminalId);
-  // Orca's orchestration supervises the member from here: its dispatch says when the member's turn ended (see
-  // onAgentStatus), and a chat member's messages ride Orca's mail. Messages to a terminal member stay the plugin's own
-  // typed ones: a send to its dispatch would reach it as a new task (see sendMember). Without orchestration the plugin
-  // dispatches and reads the member itself.
-  const teamRun = store.leadRun(leadId, true);
-  if (orchestra?.enabled() && teamRun) {
-    const orcaRun = teamRun.orcaRunId ?? (await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`));
-    if (orcaRun) {
-      // The spec is the role, not the task: Orca queues it as another turn, and the task itself is already in the
-      // launch prompt. The member record exists before this, so its first team tool call finds its run.
-      const dispatch = await orchestra.startWorker({ runId: orcaRun, leadId, handle: terminalId, title, spec: specBrief(spec), workspacePath: ctx.lead.path });
-      const current = store.member(terminalId);
-      if (dispatch) {
-        if (current) await store.setMember({ ...current, dispatchId: dispatch.dispatchId, orcaRunId: orcaRun });
-        if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current) => ({ ...current, orcaRunId: orcaRun }));
-      } else {
-        notes.push(lang === "zh" ? `${spec.name}：Orca 编排没有接管这个成员，插件自己派发。` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`);
-      }
-    }
-  }
   return { agentId: terminalId, title, continued: false, surface: ran, note: notes[0] ?? null };
+}
+
+/**
+ * Puts a newly started member under Orca's orchestration: the team run's one Orca Run, the member a supervised worker
+ * of it. Called once the member is in the team run, so its first `agent-team` call finds its run even while Orca waits
+ * for its turn to start. A member that has already finished by then has its dispatch settled at once. Returns a note
+ * for the lead when Orca would not take the member (the plugin then dispatches it itself), else null.
+ */
+async function attachWorker(ctx: LeadContext, leadId: string, member: { agentId: string; title: string }, spec: MemberSpec, lang: PromptLanguage): Promise<string | null> {
+  const teamRun = store.leadRun(leadId, true);
+  // A delegation task is one turn and one report, which is what an Orca dispatch is. A team member works many turns
+  // (claims, reviews, mentions), each of which would end without worker_done and have Orca escalate it to the lead.
+  if (!orchestra?.enabled() || !teamRun || teamRun.mode !== "delegation") return null;
+  // A reused member's earlier dispatch that never settled is closed before the new task gets its own.
+  const earlier = store.member(member.agentId);
+  if (earlier?.dispatchId) {
+    await orchestra.abandon(earlier.dispatchId).catch(() => undefined);
+    await store.setMember({ ...earlier, dispatchId: undefined, orcaTaskId: undefined });
+  }
+  const orcaRun = teamRun.orcaRunId ?? (await orchestra.runFor(teamRun.id, leadId, `${teamRun.id} ${teamRun.title}`));
+  if (!orcaRun) return null;
+  if (teamRun.orcaRunId !== orcaRun) await store.mutate(teamRun.id, (current) => ({ ...current, orcaRunId: orcaRun }));
+  // The spec is the role, not the task: Orca queues it as another turn, and the task is already in the launch prompt.
+  const dispatch = await orchestra.startWorker({ runId: orcaRun, leadId, handle: member.agentId, title: member.title, spec: specBrief(spec), workspacePath: ctx.lead.path });
+  if (!dispatch) return lang === "zh" ? `${spec.name}：Orca 编排没有接管这个成员，插件自己派发。` : `${spec.name}: Orca's orchestration did not take this member; the plugin dispatches it itself.`;
+  const live = memberOf(store.get(teamRun.id) ?? teamRun, member.agentId);
+  if (live && live.state !== "working" && live.state !== "attention") {
+    // It reported before Orca saw it start: nothing will settle the dispatch, so settle it now.
+    await orchestra.abandon(dispatch.dispatchId).catch(() => undefined);
+    return null;
+  }
+  const current = store.member(member.agentId);
+  if (current) await store.setMember({ ...current, dispatchId: dispatch.dispatchId, orcaTaskId: dispatch.taskId, orcaRunId: orcaRun });
+  return null;
 }
 
 /** A pi model as Orca passes it: a bare id one provider lists is completed to that provider; near matches name the choices. */
@@ -459,6 +477,7 @@ async function staff(runId: string): Promise<void> {
         const reopened = roundComplete(latest) && latest.notifiedRound >= latest.round ? { ...latest, round: latest.round + 1, rounds: Math.max(latest.rounds, latest.round + 1) } : latest;
         return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${started.title}（${spec.name}）为它的待办任务加入了运行。` : `${started.title} (${spec.name}) joined the run for its open tasks.`, to: [], files: [] }, now()).run;
       });
+      if (!started.continued) await attachWorker(ctx, run.leadAgentId, started, spec, current.language);
     } catch (error) {
       console.error(`[ensemble] run ${runId}: could not staff ${role}`, error);
     } finally {
@@ -631,7 +650,7 @@ async function reconcile(runId: string): Promise<void> {
     // as its dispatch still speaks of the work it is on (the plugin types work into terminal members itself).
     const session = store.member(member.agentId);
     if (orchestra?.governs(session) && session.dispatchId) {
-      const dispatch = await orchestra.show(session.dispatchId);
+      const dispatch = Orchestra.informative(await orchestra.show(session.dispatchId));
       if (dispatch) {
         const settled = Orchestra.settled(dispatch);
         if (settled.settled) {
@@ -715,7 +734,7 @@ export async function onAgentStatus(payload: { terminalId?: string; state: strin
       // the agent's screen is only a heuristic next to it. A dispatch that can't be read leaves the plugin's reading.
       const session = store.member(terminalId);
       let dispatch: Awaited<ReturnType<Orchestra["show"]>> = null;
-      if (orchestra?.governs(session)) dispatch = await orchestra.show(session.dispatchId);
+      if (orchestra?.governs(session)) dispatch = Orchestra.informative(await orchestra.show(session.dispatchId));
       if (dispatch) {
         // Settled: Orca knows the turn is over. Open: the agent went idle without a worker_done (it reported through
         // its own tool, or the turn was a wake-up), which is not proof of anything by itself — the sweep decides, and
@@ -1149,6 +1168,9 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
           run = await store.log(run.id, [contextEvent(started.agentId, spec, started.continued)]);
           lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "沿用已有成员") : tr("started", "已启动")}`);
           if (started.note) lines.push(`  ${started.note}`);
+          // Every delegated task is its own Orca dispatch, a reused member's too.
+          const attached = await attachWorker(ctx, agent.id, started, spec, lang);
+          if (attached) lines.push(`  ${attached}`);
         } catch (error) {
           lines.push(`- ${spec.name}: ${tr("not started", "未启动")}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -1271,6 +1293,8 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
             run = await store.mutate(run.id, (current) => upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()));
             lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "沿用已有成员") : tr("started", "已启动")}`);
             if (started.note) lines.push(`  ${started.note}`);
+            const attached = started.continued ? null : await attachWorker(ctx, agent.id, started, spec, lang);
+            if (attached) lines.push(`  ${attached}`);
           } catch (error) {
             lines.push(`- ${spec.name}: ${tr("not started", "未启动")}: ${error instanceof Error ? error.message : String(error)}`);
           }
@@ -1824,6 +1848,13 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
         // Already counted as finished (its turn looked over): the report replaces what was taken from its screen.
         await store.mutate(run.id, (current) => amendReport(current, agent.id, result), { trace: false });
       }
+      // Orca's side of the same report: worker_done from this member's own shell settles its dispatch, and Orca shows
+      // the result in the lead's chat as an update from the worker.
+      const session = store.member(agent.id);
+      if (orchestra?.holds(session) && session.orcaTaskId) {
+        const done = await orchestra.workerDone(agent.id, session.dispatchId, session.orcaTaskId, "succeeded", member.title, excerpt(result, 4000));
+        if (done) await store.setMember({ ...session, dispatchId: undefined, orcaTaskId: undefined });
+      }
       return ok(tr("The lead has your report. End your turn now.", "协调器已收到你的汇报。请现在结束本轮。"));
     },
   });
@@ -1867,7 +1898,7 @@ function fieldsOf(schema: z.ZodTypeAny): string[] {
 const shown = new Set<string>();
 
 /** Runs one `agent-team` command for the terminal that sent it. */
-export async function handleShim(request: ShimRequest): Promise<ShimResponse> {
+export async function handleShim(request: ShimRequest, caller: ShellCaller | null = null): Promise<ShimResponse> {
   await store.load();
   const terminalId = request.terminalId;
   if (!terminalId) return { isError: true, text: "agent-team runs only inside Orca, in a terminal or a chat: neither ORCA_TERMINAL_HANDLE nor ORCA_AGENT_SESSION_ID is set." };
@@ -1906,7 +1937,8 @@ export async function handleShim(request: ShimRequest): Promise<ShimResponse> {
   const controller = new AbortController();
   const actor = lead ? "lead" : terminalId;
   try {
-    const result = await asActor(actor, () => tool.execute(parsed.data, { agent: { id: terminalId, workspaceId: request.workspaceId }, signal: controller.signal }));
+    // Run as the calling agent: what the tool launches or sends for it goes out from the agent's own shell.
+    const result = await asCaller(caller, () => asActor(actor, () => tool.execute(parsed.data, { agent: { id: terminalId, workspaceId: request.workspaceId }, signal: controller.signal })));
     let text = result.text ?? "";
     // The lead's standing instructions, once per session (agents without a system prompt get them only this way).
     if (lead && tool.name === LEAD_TOOLS.status && (!shown.has(terminalId) || (request.input as { instructions?: unknown })?.instructions === true)) {

@@ -11,7 +11,7 @@ export const TEAM_SUFFIX = ".team.json";
 
 /** Agent CLIs Orca launches; a role names one, and may name a model and effort for it. */
 export const KNOWN_AGENTS = [
-  "claude", "codex", "gemini", "opencode", "pi", "copilot", "cursor", "kimi", "qwen-code", "droid", "grok", "kiro", "hermes", "codebuddy",
+  "claude", "codex", "omp", "gemini", "opencode", "pi", "copilot", "cursor", "kimi", "qwen-code", "droid", "grok", "kiro", "hermes", "codebuddy",
 ] as const;
 
 /** Model suggestions per agent; any model id the agent accepts works. */

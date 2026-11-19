@@ -82,8 +82,8 @@ export const STRINGS = {
     "surface": "Opens as",
     "chat": "Chat (GUI)",
     "terminal": "Terminal (CLI)",
-    "chatHint": "Orca's own chat client. Falls back to a terminal where Orca can't open this agent as a chat.",
-    "terminalHint": "The agent's command line in an Orca terminal"
+    "chatHint": "Orca's own chat client. Its permissions follow Orca's setting for this agent (Settings → Agents): choose Full access there for no prompts. Falls back to a terminal where Orca can't open this agent as a chat.",
+    "terminalHint": "The agent's command line in an Orca terminal. A member started here runs with full access, so it never stops on a permission prompt."
    },
    "role": {
     "name": "Role name",
@@ -691,8 +691,8 @@ export const STRINGS = {
     "surface": "打开方式",
     "chat": "图形界面",
     "terminal": "命令行",
-    "chatHint": "用 Orca 自带的聊天客户端打开；Orca 无法以聊天方式打开这个智能体时改用终端。",
-    "terminalHint": "在 Orca 终端里运行这个智能体的命令行"
+    "chatHint": "用 Orca 自带的聊天客户端打开。权限跟随 Orca 设置里这个智能体的权限（设置 → 智能体），设为「完全访问」就不会弹授权。Orca 无法以聊天方式打开这个智能体时改用终端。",
+    "terminalHint": "在 Orca 终端里运行这个智能体的命令行。以命令行启动的成员一律完全访问，不会停下来等授权。"
    },
    "role": {
     "name": "角色名称",

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { callerHandle, chatHandleFromPaneKey, chatSessionId, cliModelArgs, isChatHandle, parsePiModels, resolvePiModel, surfaceOf } from "../src/shared/agents";
+import { callerHandle, chatHandleFromPaneKey, chatSessionId, cliModelArgs, isChatHandle, parsePiModels, resolvePiModel, surfaceOf, withFullAccess } from "../src/shared/agents";
 
 describe("where an agent runs", () => {
   it("is a chat when its chat works, a terminal otherwise, and an explicit choice wins", () => {
     expect(surfaceOf({ agent: "claude" })).toBe("chat");
     // A pi chat starts and stays idle on Orca 1.4.261, so pi (and opencode) default to terminals.
     expect(surfaceOf({ agent: "pi" })).toBe("terminal");
-    expect(surfaceOf({ agent: "pi", surface: "chat" })).toBe("chat");
+    // pi's chat starts and does nothing: a terminal even when a team asks for a chat.
+    expect(surfaceOf({ agent: "pi", surface: "chat" })).toBe("terminal");
+    expect(surfaceOf({ agent: "omp" })).toBe("chat");
     expect(surfaceOf({ agent: "claude", surface: "terminal" })).toBe("terminal");
     expect(surfaceOf({ agent: "gemini" })).toBe("terminal");
     // Asked for explicitly, a chat is tried: Orca refuses it and the launch falls back to a terminal.
@@ -67,5 +69,22 @@ describe("pi's models", () => {
     const missing = resolvePiModel("qwen-max", known);
     expect(missing.ok).toBe(false);
     expect(!missing.ok && missing.error).toBe("unknown");
+  });
+});
+
+describe("members with full access", () => {
+  it("puts the agent's full-access arguments before the prompt", () => {
+    expect(withFullAccess("claude", ["claude", "--model", "haiku", "the task"], 3)).toEqual({ words: ["claude", "--model", "haiku", "--dangerously-skip-permissions", "the task"], added: 1 });
+    expect(withFullAccess("qwen-code", ["qwen", "the task"], 1).words).toEqual(["qwen", "--approval-mode", "yolo", "the task"]);
+  });
+
+  it("leaves a command that has them, or an agent without any, as it is", () => {
+    expect(withFullAccess("claude", ["claude", "--dangerously-skip-permissions", "x"], 2)).toEqual({ words: ["claude", "--dangerously-skip-permissions", "x"], added: 0 });
+    expect(withFullAccess("pi", ["pi", "x"], 1)).toEqual({ words: ["pi", "x"], added: 0 });
+  });
+
+  it("replaces Orca's Auto arguments with full access", () => {
+    expect(withFullAccess("claude", ["claude", "--permission-mode", "auto", "x"], 3).words).toEqual(["claude", "--dangerously-skip-permissions", "x"]);
+    expect(withFullAccess("codex", ["codex", "--approve-for-me", "x"], 2).words).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox", "x"]);
   });
 });

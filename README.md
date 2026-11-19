@@ -69,7 +69,11 @@ Orca plugins can't give agents new tools, so the plugin puts a command, `agent-t
 - Team mode's intake can't be skipped: `agent-team kickoff` needs your own words confirming the brief, found in the lead's transcript or on its screen after the brief was recorded, or your **Confirm** in the panel.
 - State lives in `~/.orca-ensemble/<plugin>/` (sessions and runs). Team files live in the project, `.agents/teams/*.team.json`, shared through git. A run report opens on a small link file in `.agents/runs/`, which the plugin keeps out of git.
 
-On an Orca with `orca orchestration`, members are supervised by Orca's own orchestration: each team run is one Orca Run, each member is attached to it as a worker (`orchestration worker-start --terminal`, keeping its chat or terminal and its model), a chat member's messages go to its dispatch with `orchestration send`, and a member's turn ends when its dispatch settles (`worker_done`), which also wakes the lead. That is what lets a chat member, which has no terminal to type into, be reached during a run. On an older Orca the plugin dispatches and reads its members itself, as above.
+**Native delegation.** When the lead runs `agent-team delegate` or `kickoff`, the plugin has that command run `orca agent launch` in the lead's own shell, so Orca treats the lead as the one delegating: each member shows in the lead's chat as **Handed off to agent**, exactly as when an agent in Orca launches another one itself. In delegation mode each task is also an Orca task assigned to its member (`orchestration task-create` and `dispatch`, without injecting another turn); when the member runs `agent-team report`, the plugin sends Orca's `worker_done` from the member's own shell, so the result shows in the lead's chat as **Update from worker** and Orca settles the task. Team-mode members work many turns (claims, reviews, mentions) and are tracked by the plugin. On an older Orca without `orca orchestration`, the plugin launches and reads members itself.
+
+**Permissions.** A member the plugin starts in a terminal runs with full access (`--dangerously-skip-permissions` for Claude, `--dangerously-bypass-approvals-and-sandbox` for Codex, the same arguments Orca's own Full access uses), so delegated work never waits on a prompt. A chat's permission is Orca's per-agent setting (Settings → Agents), which a launch can't change: set the agents you delegate to as chats to **Full access** there, or choose **Terminal (CLI)** for them in the team.
+
+**Agents.** claude, codex, omp and grok open as chats by default; pi always runs in a terminal (its chat starts and does nothing). omp takes its own `provider/model` ids and roles; its and pi's models are listed in the team editor from `omp --list-models` / `pi --list-models`.
 
 ### Requirements
 
@@ -189,7 +193,11 @@ Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 
 - 团队模式的需求对接不能跳过：`agent-team kickoff` 需要你在简报之后亲口确认的原话（从协调器的会话记录或屏幕里核对），或你在面板里按**确认**。
 - 状态保存在 `~/.orca-ensemble/<plugin>/`。团队文件保存在项目里的 `.agents/teams/*.team.json`，通过 git 共享。运行报告打开的是 `.agents/runs/` 下的小链接文件，插件会把它排除在 git 之外。
 
-在支持 `orca orchestration` 的 Orca 上，成员由 Orca 自己的编排监管：每次团队运行对应一个 Orca Run，每个成员用 `orchestration worker-start --terminal` 作为工作单元挂到这个 Run 上（保留它的图形界面或终端，以及它的模型）；给图形界面成员的消息用 `orchestration send` 发到它的派发（dispatch）；派发结束（`worker_done`）即成员的回合结束，Orca 同时唤醒协调器。正因如此，没有终端可输入的图形界面成员在运行中也能收到消息。旧版 Orca 上，仍由插件自己派发和读取成员，方式如上。
+**原生委派。** 协调者运行 `agent-team delegate` 或 `kickoff` 时，插件让这个命令在协调者自己的 shell 里执行 `orca agent launch`，所以在 Orca 看来是协调者自己在委派：每个成员都会在协调者的聊天里显示为「**已移交给智能体**」，和在 Orca 里让一个 agent 直接启动另一个 agent 时完全一样。委派模式下，每个任务还会登记为 Orca 任务并派给对应成员（`orchestration task-create` 和 `dispatch`，不额外注入回合）；成员运行 `agent-team report` 时，插件从成员自己的 shell 发出 Orca 的 `worker_done`，结果会在协调者的聊天里显示为「**来自工作者的更新**」，Orca 同时把任务标记为完成。团队模式的成员会有很多回合（认领、互评、被 @），由插件跟踪。没有 `orca orchestration` 的旧版 Orca 上，仍由插件自己启动和读取成员。
+
+**权限。** 插件以命令行（终端）启动的成员一律完全访问（Claude 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox`，与 Orca 自己的「完全访问」用的参数相同），委派的工作不会停下来等授权。图形界面（聊天）的权限是 Orca 里按智能体的设置（设置 → 智能体），启动时无法改变：把要以图形界面委派的智能体在那里设为「**完全访问**」，或者在团队里给它们选「命令行」。
+
+**智能体。** claude、codex、omp、grok 默认以图形界面打开；pi 一律用命令行（它的聊天启动后不干活）。omp 使用它自己的 `provider/model` 和角色写法；团队编辑器里 omp 和 pi 的模型清单分别来自 `omp --list-models` 和 `pi --list-models`。
 
 ### 要求
 
