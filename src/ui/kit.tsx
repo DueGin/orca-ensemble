@@ -1,5 +1,6 @@
 // Small building blocks shared by the panel, the team editor and the run report.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { clientMark, modelMark, type Mark } from "../shared/agent-marks";
 
 // Lucide icons (MIT), the few the plugin draws, as path data on a 24 grid.
 const ICONS: Record<string, string> = {
@@ -62,6 +63,26 @@ export function Icon({ name, size = 14, style }: { name: string; size?: number; 
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", ...style }} aria-hidden>
       {paths.map((d, index) => <path key={index} d={d} />)}
     </svg>
+  );
+}
+
+/** A mark drawn from its SVG string: a fill="currentColor" mark takes the color around it. */
+function MarkSvg({ mark, className }: { mark: Mark; className?: string }) {
+  if (mark.kind === "letter") return <span className={`${className ?? ""} mark-letter`}>{mark.letter}</span>;
+  return <span className={className} dangerouslySetInnerHTML={{ __html: mark.svg }} />;
+}
+
+/**
+ * An agent's avatar: its client's mark (Claude Code, Codex, OpenCode…) with the model it runs badged on its corner.
+ * `model` is optional: without one, or with one whose vendor is unknown, the badge shows the model's initial.
+ */
+export function AgentAvatar({ agent, model, size = 26, className, title }: { agent: string; model?: string | null; size?: number; className?: string; title?: string }) {
+  const model_ = modelMark(model, agent);
+  return (
+    <span className={`agent-avatar${className ? ` ${className}` : ""}`} style={{ width: size, height: size, borderRadius: Math.round(size * 0.3) }} title={title}>
+      <MarkSvg mark={clientMark(agent)} className="agent-avatar-client" />
+      {model_ ? <span className="agent-avatar-badge" aria-hidden><MarkSvg mark={model_} className="agent-avatar-model" /></span> : null}
+    </span>
   );
 }
 

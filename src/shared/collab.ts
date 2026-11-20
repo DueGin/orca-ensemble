@@ -203,9 +203,19 @@ export function newRunId(random: () => number = Math.random): string {
   return `R${Math.floor(random() * 0x100000000).toString(16).padStart(8, "0").toUpperCase()}`;
 }
 
-/** A member title such as `ui#ADB2`. */
-export function memberTitle(role: string, random: () => number = Math.random): string {
-  return `${role}#${Math.floor(random() * 0x10000).toString(16).padStart(4, "0").toUpperCase()}`;
+/** A member as text: its title, followed by its role when the title is not just the role (`ui 2 (ui)`, `old#A1B2 (ui)`). */
+export function memberName(member: { title: string; role: string }, zh = false): string {
+  return member.title.trim().toLowerCase() === member.role.trim().toLowerCase() ? member.title : zh ? `${member.title}（${member.role}）` : `${member.title} (${member.role})`;
+}
+
+/** A member's title: its role's name, numbered (`tester 2`) when another member of the lead already has that title. */
+export function memberTitle(role: string, taken: readonly string[] = []): string {
+  const name = role.trim();
+  const used = new Set(taken.map((title) => title.trim().toLowerCase()));
+  if (!used.has(name.toLowerCase())) return name;
+  let n = 2;
+  while (used.has(`${name} ${n}`.toLowerCase())) n += 1;
+  return `${name} ${n}`;
 }
 
 export function createRun(input: { id: string; leadAgentId: string; workspaceId: string; mode: CollabMode; title: string; reason?: string; rounds?: number; brief?: Brief | null; planApproval?: boolean; language?: PromptLanguage; now: string }): Run {
@@ -726,7 +736,7 @@ export function pendingPlans(run: Run): BoardTask[] {
   return run.tasks.filter((task) => task.state === "doing" && task.plan?.status === "pending");
 }
 
-/** Whether a post is addressed to the member: by its role, its title (such as `api#1A2B`), or to all. */
+/** Whether a post is addressed to the member: by its role, its title (such as `api 2`), or to all. */
 export function addressedTo(post: BoardPost, member: Pick<RunMember, "role" | "title">): boolean {
   return post.to.some((to) => sameRole(to, member.role) || sameRole(to, member.title) || sameRole(to, TO_ALL));
 }
@@ -920,7 +930,7 @@ export function runSummary(run: Run): string {
   const w = WORDS[lang];
   const state = run.status === "closed" ? w.runState.closed : runFinished(run) ? w.runState.finished : w.runState.progress;
   const head = `${w.run(run.id, w.mode[run.mode], MODE_SPECS[run.mode].pattern, run.title)} · ${state} · ${run.mode === "team" ? w.roundOf(run.round, run.rounds) : w.batch(run.round)}`;
-  const members = run.members.map((member) => `- ${member.title} (${member.role}): ${w.memberState[member.state]}${member.task ? ` · ${w.task}: ${excerpt(member.task, 120)}` : ""}`);
+  const members = run.members.map((member) => `- ${memberName(member, lang === "zh")}: ${w.memberState[member.state]}${member.task ? ` · ${w.task}: ${excerpt(member.task, 120)}` : ""}`);
   const claims = run.claims.length ? [`${w.claims}:`, ...run.claims.map((claim) => `- ${claim.role}: ${claim.path || "."}`)] : [];
   return [head, ...(members.length ? members : [`- ${w.noMembers}`]), ...claims, run.tasks.length ? taskBoardText(run) : "", run.mode === "team" ? w.board(run.posts.length, run.posts.filter((post) => post.seq > run.leadReadSeq).length) : ""].filter(Boolean).join("\n");
 }

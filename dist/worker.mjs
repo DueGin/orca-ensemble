@@ -598,8 +598,16 @@ function excerpt(text, max) {
 function newRunId(random = Math.random) {
   return `R${Math.floor(random() * 4294967296).toString(16).padStart(8, "0").toUpperCase()}`;
 }
-function memberTitle(role, random = Math.random) {
-  return `${role}#${Math.floor(random() * 65536).toString(16).padStart(4, "0").toUpperCase()}`;
+function memberName(member, zh = false) {
+  return member.title.trim().toLowerCase() === member.role.trim().toLowerCase() ? member.title : zh ? `${member.title}\uFF08${member.role}\uFF09` : `${member.title} (${member.role})`;
+}
+function memberTitle(role, taken = []) {
+  const name2 = role.trim();
+  const used = new Set(taken.map((title) => title.trim().toLowerCase()));
+  if (!used.has(name2.toLowerCase())) return name2;
+  let n = 2;
+  while (used.has(`${name2} ${n}`.toLowerCase())) n += 1;
+  return `${name2} ${n}`;
 }
 function createRun(input2) {
   const rounds = input2.mode === "team" ? Math.min(MAX_ROUNDS, Math.max(1, input2.rounds ?? DEFAULT_TEAM_ROUNDS)) : 1;
@@ -1172,7 +1180,7 @@ function runSummary(run) {
   const w = WORDS[lang];
   const state = run.status === "closed" ? w.runState.closed : runFinished(run) ? w.runState.finished : w.runState.progress;
   const head = `${w.run(run.id, w.mode[run.mode], MODE_SPECS[run.mode].pattern, run.title)} \xB7 ${state} \xB7 ${run.mode === "team" ? w.roundOf(run.round, run.rounds) : w.batch(run.round)}`;
-  const members2 = run.members.map((member) => `- ${member.title} (${member.role}): ${w.memberState[member.state]}${member.task ? ` \xB7 ${w.task}: ${excerpt(member.task, 120)}` : ""}`);
+  const members2 = run.members.map((member) => `- ${memberName(member, lang === "zh")}: ${w.memberState[member.state]}${member.task ? ` \xB7 ${w.task}: ${excerpt(member.task, 120)}` : ""}`);
   const claims = run.claims.length ? [`${w.claims}:`, ...run.claims.map((claim2) => `- ${claim2.role}: ${claim2.path || "."}`)] : [];
   return [head, ...members2.length ? members2 : [`- ${w.noMembers}`], ...claims, run.tasks.length ? taskBoardText(run) : "", run.mode === "team" ? w.board(run.posts.length, run.posts.filter((post) => post.seq > run.leadReadSeq).length) : ""].filter(Boolean).join("\n");
 }
@@ -21116,8 +21124,8 @@ function formingRules() {
     "## Assigning work to candidates",
     "- A candidate is a model, not a job: nothing about it is fixed except what its description says. Give each piece of work to the candidate whose description says it is good at or suited for that kind of work, and weigh cost and speed when the description gives them. A candidate without a description is a general member: give it work its model is suited for.",
     "- Treat what a description says a candidate must not do as a hard rule: never give it that work, also not as part of a larger task. When no candidate fits a piece of work, do it yourself or tell the user.",
-    `- You can give work straight to a candidate by its name, as the role in \`${T.delegate}\` or in a team task.`,
-    `- When the same model should take on a narrower job (its own instructions or folders, or two jobs on one model), form a role with \`${T.role}\`: a short lowercase name, the candidate, instructions and folders. A role can only run on a candidate's agent and model.`,
+    `- Give work to a candidate under a job name: in \`${T.delegate}\` or a team task, set role to a short lowercase name for the job (such as api, tester or docs) and candidate to the candidate that does it. The role is formed for this session on that candidate, with its description as notes, and its member is named after the role. Use the same role name for later work on the same job. A candidate's own name is not a role.`,
+    `- To give a role its own instructions or folders, or move it to another candidate, use \`${T.role}\`: a short lowercase name, the candidate, instructions and folders. A role can only run on a candidate's agent and model.`,
     "- Fixed roles stay available next to the candidates. When you split work, say in one line which candidate gets what and why, citing its description."
   ];
 }
@@ -21235,7 +21243,7 @@ function boardProtocol(run) {
     `- When a task is finished, mark it done (action "done", id, result: what you changed and how you checked it). Then take the next ready task: tasks for your role first, then tasks for anyone.`,
     `- Work you find that someone else should do: add a task (action "add", with its role). A task you can't finish: put it back (action "release") and say why on the board.`,
     `- Before editing files outside your tasks' files, claim them with \`${M.claim}\`. A path another member holds is refused: ask them on the board.`,
-    `- Messages: post with \`${M.post}\` and set \`to\` to roles, a member's title (such as api#1A2B), "lead" or "${TO_ALL}". Messages for you arrive in the output of any ${TEAM_BIN} command you run, and wake you when you are idle. Answer questions addressed to you.`,
+    `- Messages: post with \`${M.post}\` and set \`to\` to roles, a member's title (such as api 2), "lead" or "${TO_ALL}". Messages for you arrive in the output of any ${TEAM_BIN} command you run, and wake you when you are idle. Answer questions addressed to you.`,
     `- When no ready task is left for you, post "done" with a short summary and end your turn. The plugin wakes you when a task opens up for you.`
   ];
 }
@@ -21408,8 +21416,8 @@ function formingRules2() {
     "## \u7ED9\u5019\u9009\u6210\u5458\u5206\u914D\u5DE5\u4F5C",
     "- \u5019\u9009\u6210\u5458\u662F\u4E00\u4E2A\u6A21\u578B\uFF0C\u4E0D\u662F\u4E00\u4E2A\u5C97\u4F4D\uFF1A\u9664\u4E86\u63CF\u8FF0\u91CC\u5199\u7684\u5185\u5BB9\uFF0C\u5B83\u6CA1\u6709\u4EFB\u4F55\u56FA\u5B9A\u8BBE\u5B9A\u3002\u628A\u6BCF\u9879\u5DE5\u4F5C\u4EA4\u7ED9\u63CF\u8FF0\u4E2D\u8868\u660E\u64C5\u957F\u6216\u9002\u5408\u8FD9\u7C7B\u5DE5\u4F5C\u7684\u5019\u9009\u6210\u5458\uFF1B\u63CF\u8FF0\u91CC\u7ED9\u51FA\u6210\u672C\u548C\u901F\u5EA6\u65F6\uFF0C\u4E5F\u8981\u4E00\u5E76\u6743\u8861\u3002\u6CA1\u6709\u63CF\u8FF0\u7684\u5019\u9009\u6210\u5458\u662F\u901A\u7528\u6210\u5458\uFF1A\u628A\u9002\u5408\u5B83\u6240\u7528\u6A21\u578B\u7684\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\u3002",
     "- \u63CF\u8FF0\u4E2D\u8BF4\u67D0\u4E2A\u5019\u9009\u6210\u5458\u4E0D\u80FD\u505A\u7684\u4E8B\u662F\u786C\u6027\u89C4\u5219\uFF1A\u7EDD\u4E0D\u628A\u8FD9\u7C7B\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF0C\u4F5C\u4E3A\u66F4\u5927\u4EFB\u52A1\u7684\u4E00\u90E8\u5206\u4E5F\u4E0D\u884C\u3002\u6CA1\u6709\u4EFB\u4F55\u5019\u9009\u6210\u5458\u9002\u5408\u67D0\u9879\u5DE5\u4F5C\u65F6\uFF0C\u4F60\u81EA\u5DF1\u505A\uFF0C\u6216\u8005\u544A\u8BC9\u7528\u6237\u3002",
-    `- \u4F60\u53EF\u4EE5\u76F4\u63A5\u7528\u5019\u9009\u6210\u5458\u7684\u540D\u5B57\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF1A\u5728 \`${T2.delegate}\` \u6216\u56E2\u961F\u4EFB\u52A1\u4E2D\u628A\u5B83\u7684\u540D\u5B57\u4F5C\u4E3A\u89D2\u8272\uFF08role\uFF09\u3002`,
-    `- \u5F53\u540C\u4E00\u4E2A\u6A21\u578B\u9700\u8981\u627F\u62C5\u66F4\u5177\u4F53\u7684\u804C\u8D23\u65F6\uFF08\u6709\u81EA\u5DF1\u7684\u6307\u4EE4\u6216\u6587\u4EF6\u5939\uFF0C\u6216\u8005\u4E00\u4E2A\u6A21\u578B\u627F\u62C5\u4E24\u9879\u804C\u8D23\uFF09\uFF0C\u7528 \`${T2.role}\` \u7EC4\u5EFA\u4E00\u4E2A\u89D2\u8272\uFF1A\u4E00\u4E2A\u7B80\u77ED\u7684\u5C0F\u5199\u540D\u79F0\u3001\u5019\u9009\u6210\u5458\u3001\u6307\u4EE4\u548C\u6587\u4EF6\u5939\u3002\u89D2\u8272\u53EA\u80FD\u8FD0\u884C\u5728\u67D0\u4E2A\u5019\u9009\u6210\u5458\u7684\u667A\u80FD\u4F53\u548C\u6A21\u578B\u4E0A\u3002`,
+    `- \u4EA4\u7ED9\u5019\u9009\u6210\u5458\u7684\u5DE5\u4F5C\u8981\u8D77\u4E00\u4E2A\u5C97\u4F4D\u540D\uFF1A\u5728 \`${T2.delegate}\` \u6216\u56E2\u961F\u4EFB\u52A1\u4E2D\uFF0Crole \u586B\u8FD9\u4EFD\u5DE5\u4F5C\u7684\u7B80\u77ED\u5C0F\u5199\u5C97\u4F4D\u540D\uFF08\u4F8B\u5982 api\u3001tester \u6216 docs\uFF09\uFF0Ccandidate \u586B\u7531\u54EA\u4E2A\u5019\u9009\u6210\u5458\u6765\u505A\u3002\u63D2\u4EF6\u4F1A\u5728\u8BE5\u5019\u9009\u6210\u5458\u4E0A\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u597D\u8FD9\u4E2A\u89D2\u8272\uFF0C\u4EE5\u5B83\u7684\u63CF\u8FF0\u4F5C\u4E3A\u8BF4\u660E\uFF0C\u6210\u5458\u4E5F\u4EE5\u89D2\u8272\u540D\u547D\u540D\u3002\u4E4B\u540E\u540C\u4E00\u5C97\u4F4D\u7684\u5DE5\u4F5C\u7EE7\u7EED\u7528\u8FD9\u4E2A\u89D2\u8272\u540D\u3002\u5019\u9009\u6210\u5458\u81EA\u5DF1\u7684\u540D\u5B57\u4E0D\u80FD\u5F53\u4F5C\u89D2\u8272\u3002`,
+    `- \u8981\u7ED9\u89D2\u8272\u8BBE\u7F6E\u81EA\u5DF1\u7684\u6307\u4EE4\u6216\u6587\u4EF6\u5939\uFF0C\u6216\u628A\u5B83\u6362\u5230\u53E6\u4E00\u4E2A\u5019\u9009\u6210\u5458\u4E0A\uFF0C\u7528 \`${T2.role}\`\uFF1A\u4E00\u4E2A\u7B80\u77ED\u7684\u5C0F\u5199\u540D\u79F0\u3001\u5019\u9009\u6210\u5458\u3001\u6307\u4EE4\u548C\u6587\u4EF6\u5939\u3002\u89D2\u8272\u53EA\u80FD\u8FD0\u884C\u5728\u67D0\u4E2A\u5019\u9009\u6210\u5458\u7684\u667A\u80FD\u4F53\u548C\u6A21\u578B\u4E0A\u3002`,
     "- \u56FA\u5B9A\u89D2\u8272\u4E0E\u5019\u9009\u6210\u5458\u540C\u65F6\u53EF\u7528\u3002\u62C6\u5206\u5DE5\u4F5C\u65F6\uFF0C\u7528\u4E00\u53E5\u8BDD\u8BF4\u660E\u54EA\u4E2A\u5019\u9009\u6210\u5458\u8D1F\u8D23\u4EC0\u4E48\u4EE5\u53CA\u539F\u56E0\uFF0C\u5E76\u5F15\u7528\u5B83\u7684\u63CF\u8FF0\u3002"
   ];
 }
@@ -21529,7 +21537,7 @@ function boardProtocol2(run) {
     `- \u4EFB\u52A1\u5B8C\u6210\u540E\uFF0C\u628A\u5B83\u6807\u8BB0\u4E3A\u5B8C\u6210\uFF08action "done"\u3001id\u3001result\uFF1A\u4F60\u6539\u4E86\u4EC0\u4E48\u3001\u5982\u4F55\u68C0\u67E5\u7684\uFF09\u3002\u7136\u540E\u63A5\u4E0B\u4E00\u4E2A\u5C31\u7EEA\u4EFB\u52A1\uFF1A\u5148\u63A5\u7ED9\u4F60\u89D2\u8272\u7684\u4EFB\u52A1\uFF0C\u518D\u63A5\u4EFB\u4F55\u4EBA\u90FD\u53EF\u4EE5\u505A\u7684\u4EFB\u52A1\u3002`,
     `- \u53D1\u73B0\u5E94\u8BE5\u7531\u522B\u4EBA\u505A\u7684\u5DE5\u4F5C\uFF1A\u6DFB\u52A0\u4E00\u4E2A\u4EFB\u52A1\uFF08action "add"\uFF0C\u5E76\u586B\u5199\u5B83\u7684 role\uFF09\u3002\u65E0\u6CD5\u5B8C\u6210\u7684\u4EFB\u52A1\uFF1A\u628A\u5B83\u653E\u56DE\u53BB\uFF08action "release"\uFF09\uFF0C\u5E76\u5728\u9ED1\u677F\u4E0A\u8BF4\u660E\u539F\u56E0\u3002`,
     `- \u7F16\u8F91\u4F60\u4EFB\u52A1\u6587\u4EF6\u4EE5\u5916\u7684\u6587\u4EF6\u4E4B\u524D\uFF0C\u5148\u7528 \`${M2.claim}\` \u8BA4\u9886\u5B83\u4EEC\u3002\u5176\u4ED6\u6210\u5458\u6301\u6709\u7684\u8DEF\u5F84\u4F1A\u88AB\u62D2\u7EDD\uFF1A\u5728\u9ED1\u677F\u4E0A\u8BE2\u95EE\u5BF9\u65B9\u3002`,
-    `- \u6D88\u606F\uFF1A\u7528 \`${M2.post}\` \u53D1\u5E16\uFF0C\u5E76\u628A \`to\` \u8BBE\u4E3A\u89D2\u8272\u540D\u3001\u6210\u5458\u6807\u9898\uFF08\u5982 api#1A2B\uFF09\u3001"lead" \u6216 "${TO_ALL}"\u3002\u53D1\u7ED9\u4F60\u7684\u6D88\u606F\u4F1A\u9644\u5728\u4F60\u8FD0\u884C\u7684\u4EFB\u4F55 ${TEAM_BIN} \u547D\u4EE4\u7684\u8F93\u51FA\u91CC\uFF1B\u4F60\u7A7A\u95F2\u65F6\uFF0C\u5B83\u4EEC\u4E5F\u4F1A\u5524\u9192\u4F60\u3002\u56DE\u7B54\u53D1\u7ED9\u4F60\u7684\u95EE\u9898\u3002`,
+    `- \u6D88\u606F\uFF1A\u7528 \`${M2.post}\` \u53D1\u5E16\uFF0C\u5E76\u628A \`to\` \u8BBE\u4E3A\u89D2\u8272\u540D\u3001\u6210\u5458\u6807\u9898\uFF08\u5982 api 2\uFF09\u3001"lead" \u6216 "${TO_ALL}"\u3002\u53D1\u7ED9\u4F60\u7684\u6D88\u606F\u4F1A\u9644\u5728\u4F60\u8FD0\u884C\u7684\u4EFB\u4F55 ${TEAM_BIN} \u547D\u4EE4\u7684\u8F93\u51FA\u91CC\uFF1B\u4F60\u7A7A\u95F2\u65F6\uFF0C\u5B83\u4EEC\u4E5F\u4F1A\u5524\u9192\u4F60\u3002\u56DE\u7B54\u53D1\u7ED9\u4F60\u7684\u95EE\u9898\u3002`,
     `- \u6CA1\u6709\u5269\u4E0B\u7ED9\u4F60\u7684\u5C31\u7EEA\u4EFB\u52A1\u65F6\uFF0C\u53D1\u4E00\u6761 "done" \u5E16\u5B50\u5E76\u9644\u4E0A\u7B80\u77ED\u603B\u7ED3\uFF0C\u7136\u540E\u7ED3\u675F\u4F60\u7684\u56DE\u5408\u3002\u6709\u4EFB\u52A1\u5F00\u653E\u7ED9\u4F60\u65F6\uFF0C\u63D2\u4EF6\u4F1A\u5524\u9192\u4F60\u3002`
   ];
 }
@@ -22463,7 +22471,7 @@ async function dispatch(ctx, leadId, spec, prompt, lang) {
     return { agentId: existing, title: store.member(existing)?.title ?? spec.name, continued: true, surface: store.member(existing)?.surface ?? "terminal", note: null };
   }
   const P = promptsFor(lang);
-  const title = memberTitle(spec.name);
+  const title = memberTitle(spec.name, store.members().filter((entry) => entry.leadTerminalId === leadId).map((entry) => entry.title));
   const launchId = newLaunchId();
   const systemPrompt = P.memberSystemPrompt(ctx.team, spec);
   const wanted = surfaceOf(spec);
@@ -22640,7 +22648,7 @@ async function staff(runId) {
       const started = await dispatch(ctx, run.leadAgentId, spec, promptsFor(current.language).teamKickoffPrompt(current, current.brief, rosterOf(ctx, current, [spec]), spec, headerFor(spec, current.language)), current.language);
       await store.mutate(runId, (latest) => {
         const reopened = roundComplete(latest) && latest.notifiedRound >= latest.round ? { ...latest, round: latest.round + 1, rounds: Math.max(latest.rounds, latest.round + 1) } : latest;
-        return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${started.title}\uFF08${spec.name}\uFF09\u4E3A\u5B83\u7684\u5F85\u529E\u4EFB\u52A1\u52A0\u5165\u4E86\u8FD0\u884C\u3002` : `${started.title} (${spec.name}) joined the run for its open tasks.`, to: [], files: [] }, now()).run;
+        return addPost(upsertMember(reopened, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()), { author: "lead", agentId: run.leadAgentId, kind: "note", text: latest.language === "zh" ? `${memberName({ title: started.title, role: spec.name }, true)}\u4E3A\u5B83\u7684\u5F85\u529E\u4EFB\u52A1\u52A0\u5165\u4E86\u8FD0\u884C\u3002` : `${memberName({ title: started.title, role: spec.name })} joined the run for its open tasks.`, to: [], files: [] }, now()).run;
       });
       if (!started.continued) await attachWorker(ctx, run.leadAgentId, started, spec, current.language);
     } catch (error62) {
@@ -23045,10 +23053,56 @@ function buildTools(lang) {
     return [
       fixed.length ? tr(`Roles: ${fixed.join(", ")}.`, `\u56FA\u5B9A\u89D2\u8272\uFF1A${fixed.join(", ")}\u3002`) : "",
       formed.length ? tr(`Roles you formed: ${formed.join(", ")}.`, `\u4F60\u5EFA\u7684\u89D2\u8272\uFF1A${formed.join(", ")}\u3002`) : "",
-      ctx.team.candidates.length ? tr(`Candidates, which take work directly: ${ctx.team.candidates.map((candidate) => candidate.name).join(", ")}; or form a narrower role on one with ${L.role}.`, `\u5019\u9009\u6210\u5458\uFF08\u53EF\u76F4\u63A5\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\u4EEC\uFF09\uFF1A${ctx.team.candidates.map((candidate) => candidate.name).join(", ")}\uFF1B\u4E5F\u53EF\u4EE5\u7528 ${L.role} \u5728\u67D0\u4E2A\u5019\u9009\u4E0A\u5EFA\u66F4\u5177\u4F53\u7684\u89D2\u8272\u3002`) : tr(`Or "${HELPER}".`, `\u6216\u8005\u7528 "${HELPER}"\u3002`)
+      ctx.team.candidates.length ? tr(`Candidates: ${ctx.team.candidates.map((candidate) => candidate.name).join(", ")}. Give one work under a job name: role "tester" and candidate "<name>"; or form a role on one with ${L.role}.`, `\u5019\u9009\u6210\u5458\uFF1A${ctx.team.candidates.map((candidate) => candidate.name).join(", ")}\u3002\u4EA4\u7ED9\u5019\u9009\u6210\u5458\u7684\u5DE5\u4F5C\u8981\u8D77\u4E00\u4E2A\u5C97\u4F4D\u540D\uFF1Arole \u586B "tester" \u8FD9\u6837\u7684\u5C97\u4F4D\uFF0Ccandidate \u586B\u5019\u9009\u6210\u5458\u540D\uFF1B\u4E5F\u53EF\u4EE5\u7528 ${L.role} \u5728\u67D0\u4E2A\u5019\u9009\u4E0A\u5EFA\u89D2\u8272\u3002`) : tr(`Or "${HELPER}".`, `\u6216\u8005\u7528 "${HELPER}"\u3002`)
     ].filter(Boolean).join(" ");
   };
   const unknownRole = (ctx, role) => tr(`Unknown role "${role}". ${hint(ctx)}`, `\u672A\u77E5\u89D2\u8272\u300C${role}\u300D\u3002${hint(ctx)}`);
+  const notAJob = (name2) => tr(
+    `${name2} is a candidate, not a job. Name the job in role (such as api, tester or docs) and the candidate in candidate: {"role": "tester", "candidate": "${name2}"}.`,
+    `${name2} \u662F\u5019\u9009\u6210\u5458\uFF0C\u4E0D\u662F\u5C97\u4F4D\u3002\u8BF7\u5728 role \u91CC\u5199\u5C97\u4F4D\u540D\uFF08\u4F8B\u5982 api\u3001tester \u6216 docs\uFF09\uFF0C\u5728 candidate \u91CC\u5199\u5019\u9009\u6210\u5458\uFF1A{"role": "tester", "candidate": "${name2}"}\u3002`
+  );
+  const jobRole = (ctx, role, candidate) => {
+    const name2 = role.trim();
+    const wanted = candidate?.trim() ?? "";
+    const fixed = ctx.team.roles.find((entry) => key(entry.name) === key(name2));
+    const formed = ctx.sessionRoles.find((entry) => key(entry.name) === key(name2));
+    if (fixed && wanted) return tr(`${fixed.name} is a fixed role of the team; it runs on its own model, so give it work without a candidate, or name another job.`, `${fixed.name} \u662F\u56E2\u961F\u7684\u56FA\u5B9A\u89D2\u8272\uFF0C\u8FD0\u884C\u5728\u81EA\u5DF1\u7684\u6A21\u578B\u4E0A\uFF1B\u4EA4\u7ED9\u5B83\u7684\u5DE5\u4F5C\u4E0D\u8981\u5E26 candidate\uFF0C\u6216\u8005\u53E6\u8D77\u4E00\u4E2A\u5C97\u4F4D\u540D\u3002`);
+    if (formed && wanted && key(formed.candidate) !== key(wanted)) return tr(`${formed.name} runs on ${formed.candidate}. Move it with ${L.role} (name "${formed.name}", candidate "${wanted}") first, or name another job.`, `${formed.name} \u8FD0\u884C\u5728 ${formed.candidate} \u4E0A\u3002\u8BF7\u5148\u7528 ${L.role}\uFF08name "${formed.name}"\uFF0Ccandidate "${wanted}"\uFF09\u628A\u5B83\u6362\u8FC7\u53BB\uFF0C\u6216\u8005\u53E6\u8D77\u4E00\u4E2A\u5C97\u4F4D\u540D\u3002`);
+    if (fixed || formed) {
+      const spec2 = roleSpec(ctx, name2);
+      return spec2 ? { spec: spec2, form: null } : unknownRole(ctx, name2);
+    }
+    const isCandidate = ctx.team.candidates.some((entry) => key(entry.name) === key(name2));
+    if (wanted) {
+      const pick2 = ctx.team.candidates.find((entry) => key(entry.name) === key(wanted));
+      const list = ctx.team.candidates.map((entry) => `${entry.name} (${runtimeLabel(entry)})`).join(", ");
+      if (!pick2) return ctx.team.candidates.length ? tr(`There is no candidate "${wanted}". Candidates: ${list}.`, `\u6CA1\u6709\u5019\u9009\u6210\u5458\u300C${wanted}\u300D\u3002\u5019\u9009\u6210\u5458\uFF1A${list}\u3002`) : tr(`This team has no candidate members, so it uses its fixed roles. ${hint(ctx)}`, `\u8FD9\u4E2A\u56E2\u961F\u6CA1\u6709\u5019\u9009\u6210\u5458\uFF0C\u53EA\u7528\u56FA\u5B9A\u89D2\u8272\u3002${hint(ctx)}`);
+      if (RESERVED.has(key(name2))) return tr(`"${name2}" is reserved; pick another job name.`, `\u300C${name2}\u300D\u662F\u4FDD\u7559\u540D\uFF0C\u8BF7\u6362\u4E00\u4E2A\u5C97\u4F4D\u540D\u3002`);
+      if (isCandidate) return notAJob(name2);
+      const form = { name: name2, candidate: pick2.name, agent: pick2.agent, model: pick2.model, effort: pick2.effort, folders: [], instructions: pick2.notes.trim(), createdAt: now() };
+      const spec2 = roleSpec({ ...ctx, sessionRoles: [...ctx.sessionRoles, form] }, name2);
+      return spec2 ? { spec: spec2, form } : unknownRole(ctx, name2);
+    }
+    if (isCandidate) return notAJob(name2);
+    const spec = roleSpec(ctx, name2);
+    return spec ? { spec, form: null } : unknownRole(ctx, name2);
+  };
+  const jobRoles = (ctx, asks) => {
+    let working = ctx;
+    const specs = [];
+    const formed = [];
+    for (const ask of asks) {
+      const result = jobRole(working, ask.role, ask.candidate);
+      if (typeof result === "string") return result;
+      if (result.form) {
+        working = { ...working, sessionRoles: [...working.sessionRoles, result.form] };
+        formed.push(result.form);
+      }
+      specs.push(result.spec);
+    }
+    return { ctx: working, specs, formed };
+  };
+  const memberLine = (title, spec) => key(title) === key(spec.name) ? `${title} (${runtimeLabel(spec)})` : `${title} (${spec.name}, ${runtimeLabel(spec)})`;
   const rosterText = (ctx) => {
     const { team } = ctx;
     const lines = [];
@@ -23056,7 +23110,7 @@ function buildTools(lang) {
       lines.push(tr("Fixed roles:", "\u56FA\u5B9A\u89D2\u8272\uFF1A"), tr("| Role | Agent/model | Folders |", "| \u89D2\u8272 | Agent/\u6A21\u578B | \u6587\u4EF6\u5939 |"), "| --- | --- | --- |", ...team.roles.map((role) => `| ${role.name} | ${runtimeLabel(role)} | ${role.folders.length ? role.folders.join(", ") : tr("(any)", "\uFF08\u4E0D\u9650\uFF09")} |`));
     }
     if (team.candidates.length) {
-      lines.push("", tr("Candidate members (give work to them directly by name, or form a narrower role on one; assign by description, and never give a candidate work its description rules out):", "\u5019\u9009\u6210\u5458\uFF08\u53EF\u6309\u540D\u79F0\u76F4\u63A5\u4EA4\u7ED9\u5B83\u4EEC\u5DE5\u4F5C\uFF0C\u4E5F\u53EF\u5728\u67D0\u4E2A\u5019\u9009\u4E0A\u5EFA\u66F4\u5177\u4F53\u7684\u89D2\u8272\uFF1B\u6309\u63CF\u8FF0\u5206\u5DE5\uFF0C\u63CF\u8FF0\u91CC\u6392\u9664\u7684\u5DE5\u4F5C\u7EDD\u4E0D\u4EA4\u7ED9\u5B83\uFF09\uFF1A"));
+      lines.push("", tr("Candidate members (give one work under a job name: role is the job, such as tester, candidate is the candidate; assign by description, and never give a candidate work its description rules out):", "\u5019\u9009\u6210\u5458\uFF08\u4EA4\u7ED9\u5B83\u4EEC\u7684\u5DE5\u4F5C\u8981\u8D77\u4E00\u4E2A\u5C97\u4F4D\u540D\uFF1Arole \u662F\u5C97\u4F4D\uFF0C\u4F8B\u5982 tester\uFF0Ccandidate \u662F\u5019\u9009\u6210\u5458\uFF1B\u6309\u63CF\u8FF0\u5206\u5DE5\uFF0C\u63CF\u8FF0\u91CC\u6392\u9664\u7684\u5DE5\u4F5C\u7EDD\u4E0D\u4EA4\u7ED9\u5B83\uFF09\uFF1A"));
       for (const candidate of team.candidates) {
         lines.push(`- ${candidate.name} (${runtimeLabel(candidate)})`, ...candidate.notes.trim() ? candidate.notes.trim().split("\n").map((line) => `  ${line.trim()}`) : [tr("  (no description)", "  \uFF08\u65E0\u63CF\u8FF0\uFF09")]);
       }
@@ -23088,7 +23142,7 @@ function buildTools(lang) {
       return { text: [runSummary(run), "", tr(`Board since your last read (${unread} posts):`, `\u4F60\u4E0A\u6B21\u8BFB\u53D6\u540E\u7684\u9ED1\u677F\uFF08${unread} \u6761\uFF09\uFF1A`), page.text, page.more ? tr(`Read the rest with ${L.board}.`, `\u5176\u4F59\u5185\u5BB9\u7528 ${L.board} \u8BFB\u53D6\u3002`) : ""].filter(Boolean).join("\n"), readSeq: page.lastSeq };
     }
     const state = (member) => zh ? { working: "\u8FDB\u884C\u4E2D", done: "\u5DF2\u5B8C\u6210", attention: "\u9700\u5904\u7406", failed: "\u5931\u8D25" }[member.state] : member.state;
-    const members2 = run.members.map((member) => [`## ${member.title} (${member.role}): ${state(member)}`, member.state === "working" || member.state === "attention" ? tr("(no result yet)", "\uFF08\u8FD8\u6CA1\u6709\u7ED3\u679C\uFF09") : member.result ?? tr("(finished without a final reply)", "\uFF08\u7ED3\u675F\u65F6\u6CA1\u6709\u6700\u7EC8\u56DE\u590D\uFF09")].join("\n"));
+    const members2 = run.members.map((member) => [`## ${memberName(member, zh)}: ${state(member)}`, member.state === "working" || member.state === "attention" ? tr("(no result yet)", "\uFF08\u8FD8\u6CA1\u6709\u7ED3\u679C\uFF09") : member.result ?? tr("(finished without a final reply)", "\uFF08\u7ED3\u675F\u65F6\u6CA1\u6709\u6700\u7EC8\u56DE\u590D\uFF09")].join("\n"));
     return { text: [runSummary(run), "", ...members2].join("\n\n"), readSeq: run.leadReadSeq };
   };
   const notInTeam = tr("You are not in a team run right now, so there is no board. Report in your final reply; the lead reads it.", "\u4F60\u73B0\u5728\u4E0D\u5728\u56E2\u961F\u8FD0\u884C\u4E2D\uFF0C\u6CA1\u6709\u9ED1\u677F\u3002\u8BF7\u5728\u6700\u7EC8\u56DE\u590D\u91CC\u6C47\u62A5\uFF0C\u534F\u8C03\u5668\u4F1A\u9605\u8BFB\u3002");
@@ -23119,8 +23173,8 @@ function buildTools(lang) {
     name: L.role,
     title: tr("Form a role", "\u5EFA\u89D2\u8272"),
     description: tr(
-      "With candidate members: form a narrower role for this session on one candidate (its own instructions and folders, or a second job on the same model), change its candidate, or remove it. Not needed to give work to a candidate: name the candidate as the role. A role can only run on a candidate's agent and model.",
-      "\u6709\u5019\u9009\u6210\u5458\u65F6\uFF1A\u5728\u67D0\u4E2A\u5019\u9009\u4E0A\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u4E00\u4E2A\u66F4\u5177\u4F53\u7684\u89D2\u8272\uFF08\u6709\u81EA\u5DF1\u7684\u8BF4\u660E\u548C\u6587\u4EF6\u5939\uFF0C\u6216\u5728\u540C\u4E00\u6A21\u578B\u4E0A\u627F\u62C5\u7B2C\u4E8C\u4EFD\u5DE5\u4F5C\uFF09\uFF0C\u66F4\u6362\u5B83\u7684\u5019\u9009\uFF0C\u6216\u5220\u9664\u5B83\u3002\u53EA\u662F\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u5019\u9009\u7684\u8BDD\u4E0D\u9700\u8981\u5EFA\u89D2\u8272\uFF1A\u76F4\u63A5\u628A\u5019\u9009\u540D\u5F53\u4F5C\u89D2\u8272\u3002\u89D2\u8272\u53EA\u80FD\u8FD0\u884C\u5728\u5019\u9009\u6210\u5458\u7684 agent \u548C\u6A21\u578B\u4E0A\u3002"
+      "With candidate members: form a role for this session on one candidate with its own instructions and folders, change its candidate, or remove it. Giving work with a role name and a candidate forms the role by itself, so this is only needed for instructions, folders or a move. A role can only run on a candidate's agent and model.",
+      "\u6709\u5019\u9009\u6210\u5458\u65F6\uFF1A\u5728\u67D0\u4E2A\u5019\u9009\u4E0A\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u4E00\u4E2A\u6709\u81EA\u5DF1\u8BF4\u660E\u548C\u6587\u4EF6\u5939\u7684\u89D2\u8272\uFF0C\u66F4\u6362\u5B83\u7684\u5019\u9009\uFF0C\u6216\u5220\u9664\u5B83\u3002\u6D3E\u5DE5\u65F6\u5199\u4E86\u5C97\u4F4D\u540D\uFF08role\uFF09\u548C\u5019\u9009\u6210\u5458\uFF08candidate\uFF09\u5C31\u4F1A\u81EA\u52A8\u5EFA\u597D\u89D2\u8272\uFF0C\u6240\u4EE5\u53EA\u6709\u8981\u8BBE\u7F6E\u8BF4\u660E\u3001\u6587\u4EF6\u5939\u6216\u66F4\u6362\u5019\u9009\u65F6\u624D\u9700\u8981\u5B83\u3002\u89D2\u8272\u53EA\u80FD\u8FD0\u884C\u5728\u5019\u9009\u6210\u5458\u7684 agent \u548C\u6A21\u578B\u4E0A\u3002"
     ),
     input: external_exports.object({
       name: external_exports.string().min(1).describe(tr("Short lowercase role name, such as api or tester", "\u7B80\u77ED\u7684\u5C0F\u5199\u89D2\u8272\u540D\uFF0C\u4F8B\u5982 api \u6216 tester")),
@@ -23135,7 +23189,7 @@ function buildTools(lang) {
       const roleName = name2.trim();
       if (RESERVED.has(key(roleName))) return fail(tr(`"${roleName}" is reserved; pick another name.`, `\u300C${roleName}\u300D\u662F\u4FDD\u7559\u540D\uFF0C\u8BF7\u6362\u4E00\u4E2A\u3002`));
       if (ctx.team.roles.some((role2) => key(role2.name) === key(roleName))) return fail(tr(`"${roleName}" is a fixed role of the team; pick another name.`, `\u300C${roleName}\u300D\u662F\u56E2\u961F\u7684\u56FA\u5B9A\u89D2\u8272\uFF0C\u8BF7\u6362\u4E00\u4E2A\u540D\u5B57\u3002`));
-      if (ctx.team.candidates.some((entry) => key(entry.name) === key(roleName))) return fail(tr(`"${roleName}" is a candidate's name; give the candidate work directly by that name, or pick another name for a narrower role.`, `\u300C${roleName}\u300D\u662F\u5019\u9009\u6210\u5458\u7684\u540D\u5B57\uFF1B\u76F4\u63A5\u7528\u8FD9\u4E2A\u540D\u5B57\u628A\u5DE5\u4F5C\u4EA4\u7ED9\u5B83\uFF0C\u6216\u4E3A\u66F4\u5177\u4F53\u7684\u89D2\u8272\u53E6\u8D77\u540D\u5B57\u3002`));
+      if (ctx.team.candidates.some((entry) => key(entry.name) === key(roleName))) return fail(tr(`"${roleName}" is a candidate's name, not a job; name the role after its job, such as api or tester.`, `\u300C${roleName}\u300D\u662F\u5019\u9009\u6210\u5458\u7684\u540D\u5B57\uFF0C\u4E0D\u662F\u5C97\u4F4D\uFF1B\u8BF7\u6309\u5C97\u4F4D\u7ED9\u89D2\u8272\u8D77\u540D\uFF0C\u4F8B\u5982 api \u6216 tester\u3002`));
       const existing = ctx.sessionRoles.find((role2) => key(role2.name) === key(roleName));
       const active = store.leadRun(agent.id, true);
       const busy2 = active?.members.some((member) => !member.retired && key(member.role) === key(roleName) && (member.state === "working" || member.state === "attention"));
@@ -23182,7 +23236,8 @@ function buildTools(lang) {
     ),
     input: external_exports.object({
       tasks: external_exports.array(external_exports.object({
-        role: external_exports.string().min(1).describe(tr(`A fixed role, a candidate's name (assign by its description), a role you formed, or "${HELPER}" (teams without candidates) when nothing fits`, `\u56FA\u5B9A\u89D2\u8272\u3001\u5019\u9009\u6210\u5458\u540D\uFF08\u6309\u5176\u63CF\u8FF0\u5206\u5DE5\uFF09\u3001\u4F60\u5EFA\u7684\u89D2\u8272\uFF0C\u6216\u5728\u90FD\u4E0D\u5408\u9002\u65F6\u7528 "${HELPER}"\uFF08\u4EC5\u9650\u6CA1\u6709\u5019\u9009\u6210\u5458\u7684\u56E2\u961F\uFF09`)),
+        role: external_exports.string().min(1).describe(tr(`A fixed role, a role you formed, a new job name such as api or tester (with candidate), or "${HELPER}" (teams without candidates) when nothing fits. The member is named after it.`, `\u56FA\u5B9A\u89D2\u8272\u3001\u4F60\u5EFA\u7684\u89D2\u8272\u3001\u65B0\u7684\u5C97\u4F4D\u540D\uFF08\u4F8B\u5982 api \u6216 tester\uFF0C\u540C\u65F6\u586B candidate\uFF09\uFF0C\u6216\u5728\u90FD\u4E0D\u5408\u9002\u65F6\u7528 "${HELPER}"\uFF08\u4EC5\u9650\u6CA1\u6709\u5019\u9009\u6210\u5458\u7684\u56E2\u961F\uFF09\u3002\u6210\u5458\u4EE5\u5B83\u547D\u540D\u3002`)),
+        candidate: external_exports.string().optional().describe(tr("For a new job name: the candidate that does it (assign by its description); the role is formed on it for this session. Reuse the role name for later work on the same job.", "\u65B0\u5C97\u4F4D\u540D\u65F6\u586B\uFF1A\u7531\u54EA\u4E2A\u5019\u9009\u6210\u5458\u6765\u505A\uFF08\u6309\u5176\u63CF\u8FF0\u5206\u5DE5\uFF09\uFF1B\u4F1A\u5728\u5B83\u4E0A\u9762\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u597D\u8FD9\u4E2A\u89D2\u8272\u3002\u4E4B\u540E\u540C\u4E00\u5C97\u4F4D\u7684\u5DE5\u4F5C\u7EE7\u7EED\u7528\u8FD9\u4E2A\u89D2\u8272\u540D\u3002")),
         task: external_exports.string().min(1).describe(tr("A self-contained task: context, files, acceptance criteria and what to report back", "\u72EC\u7ACB\u5B8C\u6574\u7684\u4EFB\u52A1\uFF1A\u80CC\u666F\u3001\u6587\u4EF6\u3001\u9A8C\u6536\u6807\u51C6\uFF0C\u4EE5\u53CA\u8981\u6C47\u62A5\u4EC0\u4E48"))
       })).min(1).max(8),
       title: external_exports.string().optional().describe(tr("A short title for the user's request", "\u7528\u6237\u9700\u6C42\u7684\u7B80\u77ED\u6807\u9898")),
@@ -23191,14 +23246,15 @@ function buildTools(lang) {
     async execute({ tasks, title, reason }, { agent }) {
       const ctx = await leadContext(agent);
       if (!allowsMode(ctx.effective, "delegation")) return fail(refusal(ctx));
+      const resolved = jobRoles(ctx, tasks);
+      if (typeof resolved === "string") return fail(resolved);
       const byRole = /* @__PURE__ */ new Map();
-      for (const entry of tasks) {
-        const spec = roleSpec(ctx, entry.role);
-        if (!spec) return fail(unknownRole(ctx, entry.role));
+      tasks.forEach((entry, index) => {
+        const spec = resolved.specs[index];
         const group = byRole.get(key(spec.name)) ?? { spec, tasks: [] };
         group.tasks.push(entry.task.trim());
         byRole.set(key(spec.name), group);
-      }
+      });
       let run = store.leadRun(agent.id, true);
       if (run && run.mode !== "delegation") {
         const blocked = await closeActive(agent.id, lang);
@@ -23209,6 +23265,7 @@ function buildTools(lang) {
         const busy2 = [...byRole.values()].filter((group) => run.members.some((member) => key(member.role) === key(group.spec.name) && (member.state === "working" || member.state === "attention")));
         if (busy2.length) return fail(tr(`${busy2.map((group) => group.spec.name).join(", ")} still work on run ${run.id}. Run ${L.wait} first, or ${L.send} to change their task.`, `${busy2.map((group) => group.spec.name).join(", ")} \u8FD8\u5728\u8FD0\u884C ${run.id} \u4E2D\u5DE5\u4F5C\u3002\u8BF7\u5148\u8FD0\u884C ${L.wait}\uFF0C\u6216\u7528 ${L.send} \u4FEE\u6539\u5B83\u4EEC\u7684\u4EFB\u52A1\u3002`));
       }
+      if (resolved.formed.length) await store.setSessionRoles(agent.id, resolved.ctx.sessionRoles);
       await lockIfAuto(ctx, agent.id, "delegation");
       if (run) {
         run = await store.mutate(run.id, (current) => ({ ...startBatch(current, now()), title: title?.trim() || current.title, reason: reason?.trim() || current.reason }));
@@ -23230,7 +23287,7 @@ ${part}`).join("\n\n");
 ${task}` : task), lang);
           run = await store.mutate(run.id, (current) => mirrorTask(upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task }, now()), spec.name, started.agentId, started.title, task));
           run = await store.log(run.id, [contextEvent(started.agentId, spec, started.continued)]);
-          lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
+          lines.push(`- ${memberLine(started.title, spec)}: ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
           if (started.note) lines.push(`  ${started.note}`);
           const attached = await attachWorker(ctx, agent.id, started, spec, lang);
           if (attached) lines.push(`  ${attached}`);
@@ -23258,7 +23315,8 @@ ${task}` : task), lang);
   const PlanTaskInput = external_exports.object({
     title: external_exports.string().min(1),
     detail: external_exports.string().optional().describe(tr("What done means for this task", "\u8FD9\u4E2A\u4EFB\u52A1\u600E\u6837\u7B97\u5B8C\u6210")),
-    role: external_exports.string().optional().describe(tr("The role that should do it; omit for anyone", "\u5E94\u8BE5\u7531\u54EA\u4E2A\u89D2\u8272\u505A\uFF1B\u4E0D\u586B\u8868\u793A\u4EFB\u4F55\u4EBA")),
+    role: external_exports.string().optional().describe(tr("The role that should do it: a fixed or formed role, or a new job name such as tester (with candidate); omit for anyone", "\u5E94\u8BE5\u7531\u54EA\u4E2A\u89D2\u8272\u505A\uFF1A\u56FA\u5B9A\u89D2\u8272\u3001\u4F60\u5EFA\u7684\u89D2\u8272\uFF0C\u6216\u65B0\u7684\u5C97\u4F4D\u540D\uFF08\u4F8B\u5982 tester\uFF0C\u540C\u65F6\u586B candidate\uFF09\uFF1B\u4E0D\u586B\u8868\u793A\u4EFB\u4F55\u4EBA")),
+    candidate: external_exports.string().optional().describe(tr("For a new job name in role: the candidate that does it; the role is formed on it for this session", "role \u662F\u65B0\u5C97\u4F4D\u540D\u65F6\u586B\uFF1A\u7531\u54EA\u4E2A\u5019\u9009\u6210\u5458\u6765\u505A\uFF1B\u4F1A\u5728\u5B83\u4E0A\u9762\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u597D\u8FD9\u4E2A\u89D2\u8272")),
     after: external_exports.array(external_exports.number().int().min(1)).optional().describe(tr("Positions (1-based) of earlier tasks in this list it waits for", "\u5B83\u8981\u7B49\u5F85\u7684\u3001\u672C\u5217\u8868\u4E2D\u6392\u5728\u524D\u9762\u7684\u4EFB\u52A1\u5E8F\u53F7\uFF08\u4ECE 1 \u5F00\u59CB\uFF09")),
     files: external_exports.array(external_exports.string()).optional().describe(tr("Paths it will change; claimed for its owner while it works", "\u5B83\u4F1A\u6539\u52A8\u7684\u8DEF\u5F84\uFF1B\u8D1F\u8D23\u4EBA\u5DE5\u4F5C\u671F\u95F4\u4F1A\u88AB\u8BA4\u9886"))
   });
@@ -23272,7 +23330,7 @@ ${task}` : task), lang);
     input: external_exports.object({
       brief: BriefInput,
       tasks: external_exports.array(PlanTaskInput).max(30).optional().describe(tr("The work broken into tasks for the shared task board; one task per role when omitted", "\u62C6\u5206\u5230\u5171\u4EAB\u4EFB\u52A1\u677F\u4E0A\u7684\u4EFB\u52A1\uFF1B\u4E0D\u586B\u5219\u6BCF\u4E2A\u89D2\u8272\u4E00\u4E2A\u4EFB\u52A1")),
-      roles: external_exports.array(external_exports.string().min(1)).optional().describe(tr("The roles taking part; the roles the tasks name when omitted", "\u53C2\u4E0E\u7684\u89D2\u8272\uFF1B\u4E0D\u586B\u5219\u4E3A\u4EFB\u52A1\u4E2D\u6307\u5B9A\u7684\u89D2\u8272")),
+      roles: external_exports.array(external_exports.string().min(1)).optional().describe(tr("The roles taking part (fixed roles, formed roles, or job names the tasks form); the roles the tasks name when omitted", "\u53C2\u4E0E\u7684\u89D2\u8272\uFF08\u56FA\u5B9A\u89D2\u8272\u3001\u4F60\u5EFA\u7684\u89D2\u8272\uFF0C\u6216\u4EFB\u52A1\u4E2D\u65B0\u5EFA\u7684\u5C97\u4F4D\u540D\uFF09\uFF1B\u4E0D\u586B\u5219\u4E3A\u4EFB\u52A1\u4E2D\u6307\u5B9A\u7684\u89D2\u8272")),
       rounds: external_exports.number().int().min(1).max(MAX_ROUNDS).optional().describe(tr("1 = work only; 2 (default) adds a review round in which members check each other's done tasks", "1 = \u53EA\u505A\u5DE5\u4F5C\uFF1B2\uFF08\u9ED8\u8BA4\uFF09\u589E\u52A0\u4E00\u8F6E\u4E92\u8BC4\uFF0C\u6210\u5458\u68C0\u67E5\u5F7C\u6B64\u5DF2\u5B8C\u6210\u7684\u4EFB\u52A1")),
       planApproval: external_exports.boolean().optional().describe(tr("Members submit a plan per task and wait for your approval before doing it", "\u6210\u5458\u6BCF\u4E2A\u4EFB\u52A1\u5148\u63D0\u4EA4\u8BA1\u5212\uFF0C\u7B49\u4F60\u6279\u51C6\u540E\u518D\u505A")),
       reason: external_exports.string().optional().describe(tr("In auto mode: why team mode fits this request", "\u81EA\u52A8\u6A21\u5F0F\u4E0B\uFF1A\u4E3A\u4EC0\u4E48\u8FD9\u4E2A\u9700\u6C42\u9002\u5408\u56E2\u961F\u6A21\u5F0F"))
@@ -23281,7 +23339,10 @@ ${task}` : task), lang);
       const ctx = await leadContext(agent);
       if (!allowsMode(ctx.effective, "team")) return fail(refusal(ctx));
       const plan = (tasks ?? []).map((task) => ({ title: task.title, detail: task.detail, role: task.role?.trim() || null, after: (task.after ?? []).map(String), files: task.files }));
-      const specs = teamSpecs(ctx, roles, plan);
+      const asks = [...(tasks ?? []).filter((task) => task.role?.trim()).map((task) => ({ role: task.role, candidate: task.candidate })), ...(roles ?? []).map((role) => ({ role }))];
+      const resolved = jobRoles(ctx, asks);
+      if (typeof resolved === "string") return fail(resolved);
+      const specs = teamSpecs(resolved.ctx, roles, plan);
       if (typeof specs === "string") return fail(specs);
       const check2 = addTasks(createRun({ id: "R0", leadAgentId: agent.id, workspaceId: ctx.workspaceId, mode: "team", title: "check", language: lang, now: now() }), plan, "lead", now());
       if (check2.errors.length) return fail(`${tr("The task plan has problems:", "\u4EFB\u52A1\u8BA1\u5212\u6709\u95EE\u9898\uFF1A")}
@@ -23289,6 +23350,7 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
       const tail = await orca().readTerminal(agent.id, 400);
       const recorded = { title: brief.title.trim(), goal: brief.goal.trim(), requirements: brief.requirements, acceptance: brief.acceptance, constraints: brief.constraints, outOfScope: brief.outOfScope };
       const pending = { brief: recorded, roles: specs.map((spec) => spec.name), rounds: rounds ?? DEFAULT_TEAM_ROUNDS, reason: reason?.trim() ?? "", tasks: plan, planApproval: planApproval === true, seq: 0, at: now(), transcript: tail };
+      if (resolved.formed.length) await store.setSessionRoles(agent.id, resolved.ctx.sessionRoles);
       await store.setPendingBrief(agent.id, pending);
       return ok([
         tr("Brief recorded. Show it to the user as below, with the task plan and the roles taking part, ask them to confirm or correct it, and end your turn. Don't start members yet.", "\u9700\u6C42\u7B80\u62A5\u5DF2\u8BB0\u5F55\u3002\u8BF7\u628A\u4E0B\u9762\u7684\u7B80\u62A5\u3001\u4EFB\u52A1\u8BA1\u5212\u548C\u53C2\u4E0E\u89D2\u8272\u5C55\u793A\u7ED9\u7528\u6237\uFF0C\u8BF7\u5BF9\u65B9\u786E\u8BA4\u6216\u4FEE\u6539\uFF0C\u7136\u540E\u7ED3\u675F\u672C\u8F6E\u3002\u5148\u4E0D\u8981\u542F\u52A8\u6210\u5458\u3002"),
@@ -23349,7 +23411,7 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
           try {
             const started = await dispatch(ctx, agent.id, spec, P.teamKickoffPrompt(run, full, roster, spec, headerFor(spec, lang)), lang);
             run = await store.mutate(run.id, (current) => upsertMember(current, { role: spec.name, agentId: started.agentId, title: started.title, task: "" }, now()));
-            lines.push(`- ${started.title} (${spec.name}, ${runtimeLabel(spec)}): ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
+            lines.push(`- ${memberLine(started.title, spec)}: ${started.continued ? tr("continued", "\u6CBF\u7528\u5DF2\u6709\u6210\u5458") : tr("started", "\u5DF2\u542F\u52A8")}`);
             if (started.note) lines.push(`  ${started.note}`);
             const attached = started.continued ? null : await attachWorker(ctx, agent.id, started, spec, lang);
             if (attached) lines.push(`  ${attached}`);
@@ -23513,7 +23575,7 @@ ${errors.map((error62) => `- ${error62}`).join("\n")}
       const run = store.leadRun(agent.id, false);
       if (!run) return fail(tr(`There is no run yet. Use ${L.delegate} or ${L.kickoff}.`, `\u8FD8\u6CA1\u6709\u8FD0\u884C\u3002\u8BF7\u7528 ${L.delegate} \u6216 ${L.kickoff}\u3002`));
       const member = agentId ? memberOf(run, agentId) : [...run.members].reverse().find((entry) => role !== void 0 && key(entry.role) === key(role) && !entry.retired);
-      if (!member) return fail(tr(`No member of run ${run.id} matches ${agentId ?? role ?? "(no role or agentId given)"}. Members: ${run.members.map((entry) => `${entry.title} (${entry.role})`).join(", ")}.`, `\u8FD0\u884C ${run.id} \u4E2D\u6CA1\u6709\u6210\u5458\u5339\u914D ${agentId ?? role ?? "\uFF08\u672A\u7ED9\u51FA role \u6216 agentId\uFF09"}\u3002\u6210\u5458\uFF1A${run.members.map((entry) => `${entry.title}\uFF08${entry.role}\uFF09`).join(", ")}\u3002`));
+      if (!member) return fail(tr(`No member of run ${run.id} matches ${agentId ?? role ?? "(no role or agentId given)"}. Members: ${run.members.map((entry) => memberName(entry)).join(", ")}.`, `\u8FD0\u884C ${run.id} \u4E2D\u6CA1\u6709\u6210\u5458\u5339\u914D ${agentId ?? role ?? "\uFF08\u672A\u7ED9\u51FA role \u6216 agentId\uFF09"}\u3002\u6210\u5458\uFF1A${run.members.map((entry) => memberName(entry, true)).join(", ")}\u3002`));
       if (!await isIdleAgent(member.agentId, ctx.lead.workspaceId)) return fail(tr(`${member.title} is still working. Run ${L.wait} first, so the message doesn't interrupt it.`, `${member.title} \u8FD8\u5728\u5DE5\u4F5C\u3002\u8BF7\u5148\u8FD0\u884C ${L.wait}\uFF0C\u4EE5\u514D\u6253\u65AD\u5B83\u3002`));
       const spec = roleSpec(ctx, member.role);
       const header = spec ? headerFor(spec, run.language) : "";
@@ -23665,7 +23727,7 @@ ${tr("Claimed paths", "\u5DF2\u8BA4\u9886\u7684\u8DEF\u5F84")}: ${run.claims.map
       const ready = run.tasks.filter((task) => taskReady(run, task) && mayTake(member, task)).map((task) => task.id);
       await store.mutate(run.id, (current) => markInbox(updateMember(current, agent.id, { readSeq: Math.max(memberOf(current, agent.id)?.readSeq ?? 0, page.lastSeq) }, now()), agent.id, page.lastSeq, now()));
       return withMail(run.id, agent.id, ok([
-        tr(`Team run ${run.id}, round ${run.round} of ${run.rounds}. You are ${member.title} (${member.role}).`, `\u56E2\u961F\u8FD0\u884C ${run.id}\uFF0C\u7B2C ${run.round}/${run.rounds} \u8F6E\u3002\u4F60\u662F ${member.title}\uFF08${member.role}\uFF09\u3002`) + (member.retired ? tr(" You were replaced in this run: take no more tasks.", "\u4F60\u5728\u8FD9\u6B21\u8FD0\u884C\u4E2D\u5DF2\u88AB\u66FF\u6362\uFF1A\u4E0D\u8981\u518D\u9886\u53D6\u4EFB\u52A1\u3002") : ""),
+        tr(`Team run ${run.id}, round ${run.round} of ${run.rounds}. You are ${key(member.title) === key(member.role) ? `the ${member.role} member` : memberName(member)}.`, `\u56E2\u961F\u8FD0\u884C ${run.id}\uFF0C\u7B2C ${run.round}/${run.rounds} \u8F6E\u3002\u4F60\u662F${key(member.title) === key(member.role) ? ` ${member.role} \u89D2\u8272\u7684\u6210\u5458` : ` ${memberName(member, true)}`}\u3002`) + (member.retired ? tr(" You were replaced in this run: take no more tasks.", "\u4F60\u5728\u8FD9\u6B21\u8FD0\u884C\u4E2D\u5DF2\u88AB\u66FF\u6362\uFF1A\u4E0D\u8981\u518D\u9886\u53D6\u4EFB\u52A1\u3002") : ""),
         "",
         taskBoardText(run, lang),
         ready.length ? tr(`Ready for you: ${ready.join(", ")}.`, `\u4F60\u53EF\u4EE5\u9886\u53D6\uFF1A${ready.join(", ")}\u3002`) : tr("No task is ready for you.", "\u73B0\u5728\u6CA1\u6709\u4F60\u53EF\u4EE5\u9886\u53D6\u7684\u4EFB\u52A1\u3002"),
@@ -23702,10 +23764,10 @@ ${tr("Claimed paths", "\u5DF2\u8BA4\u9886\u7684\u8DEF\u5F84")}: ${run.claims.map
       const notes = [];
       const everyone = recipients.some((name2) => key(name2) === TO_ALL);
       if (recipients.some((name2) => key(name2) === "lead")) {
-        const message = zh ? `${PLUGIN_MESSAGE_PREFIX} ${member.title}\uFF08${member.role}\uFF09\u5728\u56E2\u961F\u8FD0\u884C ${run.id} \u7684\u9ED1\u677F\u4E0A\u7ED9\u4F60\u7559\u8A00\uFF08#${posted}\uFF0C${kind}\uFF09\uFF1A
+        const message = zh ? `${PLUGIN_MESSAGE_PREFIX} ${memberName(member, true)}\u5728\u56E2\u961F\u8FD0\u884C ${run.id} \u7684\u9ED1\u677F\u4E0A\u7ED9\u4F60\u7559\u8A00\uFF08#${posted}\uFF0C${kind}\uFF09\uFF1A
 ${text}
 
-\u7528 ${L.broadcast} \u6216 ${L.send} \u56DE\u590D\uFF1B\u5982\u679C\u6D89\u53CA\u9700\u6C42\u53D8\u66F4\uFF0C\u5148\u95EE\u7528\u6237\u3002\u8BF7\u7528\u4E2D\u6587\u56DE\u590D\u3002` : `${PLUGIN_MESSAGE_PREFIX} ${member.title} (${member.role}) wrote to you on the board of team run ${run.id} (#${posted}, ${kind}):
+\u7528 ${L.broadcast} \u6216 ${L.send} \u56DE\u590D\uFF1B\u5982\u679C\u6D89\u53CA\u9700\u6C42\u53D8\u66F4\uFF0C\u5148\u95EE\u7528\u6237\u3002\u8BF7\u7528\u4E2D\u6587\u56DE\u590D\u3002` : `${PLUGIN_MESSAGE_PREFIX} ${memberName(member)} wrote to you on the board of team run ${run.id} (#${posted}, ${kind}):
 ${text}
 
 Answer with ${L.broadcast} or ${L.send}; ask the user first when it changes the requirement.`;
@@ -24071,7 +24133,7 @@ async function resolveNamedTeam(orca2, root, name2, defaultTeam) {
 }
 
 // src/worker/api.ts
-function runView(run) {
+function runView(run, memberOf2 = () => void 0) {
   return {
     id: run.id,
     mode: run.mode,
@@ -24084,7 +24146,10 @@ function runView(run) {
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     brief: run.brief ? { title: run.brief.title, goal: run.brief.goal, acceptance: run.brief.acceptance } : null,
-    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: excerpt(member.task, 280), retired: member.retired })),
+    members: run.members.map((member) => {
+      const record2 = memberOf2(member.agentId);
+      return { role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: excerpt(member.task, 280), retired: member.retired, agent: record2?.agent ?? null, model: record2?.model ?? null };
+    }),
     tasks: run.tasks.map((task) => ({ id: task.id, title: excerpt(task.title, 160), role: task.role, state: task.state, ownerTitle: task.ownerTitle, waitingOn: task.state === "todo" ? task.deps.filter((dep) => taskOf(run, dep)?.state !== "done") : [], plan: task.plan?.status ?? null, sentBack: task.feedback !== "" && task.state !== "done" })),
     posts: run.posts.slice(-40).map((post) => ({ seq: post.seq, round: post.round, author: post.author, kind: post.kind, text: excerpt(post.text, 600), to: post.to, at: post.at })),
     postCount: run.posts.length,
@@ -24158,7 +24223,7 @@ async function leadView(deps, lead) {
     roles: lead.roles.map((role) => ({ name: role.name, candidate: role.candidate, agent: role.agent, model: role.model })),
     members: deps.store.members().filter((member) => member.leadTerminalId === lead.terminalId).map((member) => ({ terminalId: member.terminalId, role: member.role, title: member.title, agent: member.agent, model: member.model, state: deps.live(member.terminalId) ?? "unknown" })),
     pendingBrief: pendingView(lead),
-    run: run ? runView(run) : null,
+    run: run ? runView(run, (agentId) => deps.store.member(agentId)) : null,
     runCount: deps.store.allRuns().filter((entry) => entry.leadAgentId === lead.terminalId).length
   };
 }
@@ -24411,7 +24476,7 @@ ${prompt}`, focus: false });
       const run = store2.get(runId);
       return run ? detailView(run, deps) : null;
     },
-    leadRuns: async ({ terminalId }) => store2.allRuns().filter((run) => run.leadAgentId === terminalId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(runView),
+    leadRuns: async ({ terminalId }) => store2.allRuns().filter((run) => run.leadAgentId === terminalId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((run) => runView(run, (agentId) => store2.member(agentId))),
     setMode,
     confirmBrief,
     openReport,

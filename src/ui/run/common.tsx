@@ -141,7 +141,7 @@ export function overviewOf(run: RunDetail): RunView {
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     brief: run.brief ? { title: run.brief.title, goal: run.brief.goal, acceptance: run.brief.acceptance } : null,
-    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: clip(member.task, 280), retired: member.retired })),
+    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: clip(member.task, 280), retired: member.retired, agent: member.agent ?? null, model: member.model ?? null })),
     tasks: run.tasks.map((task) => ({ id: task.id, title: task.title, role: task.role, state: task.state, ownerTitle: task.ownerTitle, waitingOn: task.waitingOn, plan: task.plan?.status ?? null, sentBack: task.feedback !== "" && task.state !== "done" })),
     posts: run.posts.slice(-40).map((post) => ({ seq: post.seq, round: post.round, author: post.author, kind: post.kind, text: post.text, to: post.to, at: post.at })),
     postCount: run.posts.length,

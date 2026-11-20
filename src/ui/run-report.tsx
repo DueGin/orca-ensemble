@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { componentsOf } from "../shared/flow";
 import type { RunDetail } from "../shared/views";
 import { t } from "./i18n";
-import { Badge, Button, Empty, Icon, Spinner, TONE, useNow } from "./kit";
+import { AgentAvatar, Badge, Button, Empty, Icon, Spinner, TONE, useNow } from "./kit";
 import { call, orca } from "./orca";
 import { agoText, componentColor, durationText, EventRow, leadIdOf, liveText, memberTone, overviewOf, pageIcon, pageName, PartyTag, SectionTitle, timeText, tint, useWidth, type ComponentPage } from "./run/common";
 import { useRunDetail } from "./run/data";
@@ -183,9 +183,9 @@ function Members({ run }: { run: RunDetail }) {
           const runtime = member.agent ? (member.model ? `${member.agent} · ${member.model}` : member.agent) : null;
           return (
             <button key={member.agentId} type="button" className={`r-member${member.retired ? " retired" : ""}`} onClick={() => focusAgent(member.agentId)} title={t("report.focus")}>
-              <span className="r-member-avatar" style={{ "--tone": tone } as CSSProperties}>
-                <Icon name="bot" size={15} />
-                <span className={`r-member-dot${pulse ? " live" : ""}`} />
+              <span className="r-member-avatar">
+                <AgentAvatar agent={member.agent ?? "unknown"} model={member.model} size={32} title={runtime ?? member.role} />
+                <span className={`r-member-dot${pulse ? " live" : ""}`} style={{ "--tone": tone } as CSSProperties} />
               </span>
               <span className="r-member-text">
                 <span className="r-member-line">

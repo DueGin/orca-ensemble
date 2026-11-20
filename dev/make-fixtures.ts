@@ -41,7 +41,8 @@ function detailOf(run: Run, extra: (agentId: string) => Extra): RunDetail {
     id: run.id, mode: run.mode, title: run.title, reason: run.reason, status: run.status, round: run.round, rounds: run.rounds, planApproval: run.planApproval, language: run.language, createdAt: run.createdAt, updatedAt: run.updatedAt,
     brief: run.brief,
     leadReadSeq: run.leadReadSeq,
-    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: clip(member.task, 6000), result: member.result, collected: member.collected, readSeq: member.readSeq, inboxSeq: member.inboxSeq, retired: member.retired, dispatchedAt: member.dispatchedAt, ...extra(member.agentId) })),
+    // Runs captured before members were named after their roles carry a `#XXXX` suffix.
+    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title.replace(/#[0-9A-F]{3,4}$/i, ""), state: member.state, task: clip(member.task, 6000), result: member.result, collected: member.collected, readSeq: member.readSeq, inboxSeq: member.inboxSeq, retired: member.retired, dispatchedAt: member.dispatchedAt, ...extra(member.agentId) })),
     tasks: run.tasks.map((task) => ({ id: task.id, title: task.title, detail: task.detail, role: task.role, deps: task.deps, waitingOn: task.state === "todo" ? task.deps.filter((dep) => taskOf(run, dep)?.state !== "done") : [], files: task.files, state: task.state, owner: task.owner, ownerTitle: task.ownerTitle, result: task.result, plan: task.plan ? { text: task.plan.text, status: task.plan.status, feedback: task.plan.feedback, delivered: task.plan.delivered } : null, feedback: task.feedback, createdBy: task.createdBy, updatedAt: task.updatedAt })),
     posts: run.posts.slice(-300).map((post) => ({ ...post, text: clip(post.text, 6000) })),
     claims: run.claims.map((claim) => ({ ...claim, path: claim.path || "." })),
@@ -70,9 +71,9 @@ function teamRun(): { run: Run; extra: Record<string, Extra> } {
   let run = createRun({ id: "RTEAMDEMO1", leadAgentId: "term_lead", workspaceId: "w", mode: "team", title: brief.title, reason: "Several roles touch shared files (API, UI, styles); they need a shared board and review.", rounds: 2, brief, planApproval: true, language: "en", now: at() });
   run = logEvents(run, traceRun(null, run, "lead"), at());
   const members = [
-    { role: "api", agentId: "term_api", title: "api#7C20" },
-    { role: "ui", agentId: "term_ui_old", title: "ui#A1F3" },
-    { role: "tester", agentId: "term_test", title: "tester#3B9E" },
+    { role: "api", agentId: "term_api", title: "api" },
+    { role: "ui", agentId: "term_ui_old", title: "ui" },
+    { role: "tester", agentId: "term_test", title: "tester" },
   ];
   for (const member of members) run = step(run, (current, now) => upsertMember(current, { ...member, task: "" }, now), "lead", 4);
   run = step(run, (current, now) => addPost(current, { author: "lead", agentId: "term_lead", kind: "brief", text: `${brief.title}\n\n${brief.goal}\n\nAcceptance:\n- ${brief.acceptance.join("\n- ")}`, to: ["all"], files: [] }, now).run, "lead", 3);
@@ -112,7 +113,7 @@ function teamRun(): { run: Run; extra: Record<string, Extra> } {
   run = step(run, (current, now) => markVerdictsDelivered(current, ["T3"], true, now), "plugin", 3);
   // The ui role moves to another model: its member is replaced.
   run = step(run, (current, now) => ({ ...current, updatedAt: now, members: current.members.map((member) => (member.agentId === "term_ui_old" ? { ...member, retired: true, state: "done" as const } : member)), tasks: current.tasks.map((task) => (task.owner === "term_ui_old" && task.state === "doing" ? { ...task, state: "todo" as const, owner: null, ownerTitle: null, plan: null, updatedAt: now } : task)), claims: current.claims.filter((claim) => claim.agentId !== "term_ui_old") }), "lead", 30);
-  run = step(run, (current, now) => upsertMember(current, { role: "ui", agentId: "term_ui", title: "ui#D402", task: "" }, now), "lead", 5);
+  run = step(run, (current, now) => upsertMember(current, { role: "ui", agentId: "term_ui", title: "ui 2", task: "" }, now), "lead", 5);
   run = step(run, (current, now) => ok(claimTask(current, "term_ui", "T3", now)), "term_ui", 20);
   run = step(run, (current, now) => ok(submitPlan(current, "term_ui", "T3", "Same plan as approved before: existing tokens, dark values under html.dark, axe audit.", now)), "term_ui", 25);
   run = step(run, (current, now) => ok(reviewPlan(current, "T3", true, "Approved, as before.", now)), "lead", 20);
@@ -142,7 +143,7 @@ function teamRun(): { run: Run; extra: Record<string, Extra> } {
   run = step(run, (current, now) => ok(reviewPlan(current, "T4", true, "Yes. Add a test for the cookie fallback.", now)), "lead", 25);
   run = step(run, (current, now) => markVerdictsDelivered(current, ["T4"], true, now), "plugin", 3);
   run = step(run, (current, now) => claimPaths(current, "term_api", ["index.html"], now).run, "term_api", 6);
-  run = note(run, [{ component: "claims", action: "conflict", direction: "in", from: "term_test", to: [], subject: "src/boot.ts", note: "held by api#7C20" }], 8);
+  run = note(run, [{ component: "claims", action: "conflict", direction: "in", from: "term_test", to: [], subject: "src/boot.ts", note: "held by api" }], 8);
   run = step(run, (current, now) => ok(addPost(current, { author: "tester", agentId: "term_test", kind: "update", text: "Waiting for T2 before I write the E2E test; drafting the fixtures meanwhile.", to: ["lead"], files: [] }, now)), "term_test", 10);
   return {
     run,
@@ -164,9 +165,9 @@ function delegationRun(): { run: Run; extra: Record<string, Extra> } {
   let run = createRun({ id: "RDELEGDEMO", leadAgentId: "term_lead2", workspaceId: "w", mode: "delegation", title: "Audit the three services for missing request timeouts and add them", reason: "Three independent services in separate folders: each sub-agent can audit and fix one alone.", language: "en", now: at() });
   run = logEvents(run, traceRun(null, run, "lead"), at());
   const packets = [
-    { role: "billing", agentId: "term_bill", title: "billing#11AF", task: "Audit services/billing for outgoing HTTP calls without a timeout. Add a 10 s timeout to each (use the shared httpClient options). Report the files you changed and any call you left alone, with why." },
-    { role: "search", agentId: "term_search", title: "search#5D0E", task: "Audit services/search for outgoing HTTP and gRPC calls without a deadline. Add 5 s deadlines. Report the files you changed." },
-    { role: "notify", agentId: "term_notify", title: "notify#C3B2", task: "Audit services/notify (email + push providers) for calls without a timeout. Add 15 s timeouts and a retry on 503 only. Report the files you changed." },
+    { role: "billing", agentId: "term_bill", title: "billing", task: "Audit services/billing for outgoing HTTP calls without a timeout. Add a 10 s timeout to each (use the shared httpClient options). Report the files you changed and any call you left alone, with why." },
+    { role: "search", agentId: "term_search", title: "search", task: "Audit services/search for outgoing HTTP and gRPC calls without a deadline. Add 5 s deadlines. Report the files you changed." },
+    { role: "notify", agentId: "term_notify", title: "notify", task: "Audit services/notify (email + push providers) for calls without a timeout. Add 15 s timeouts and a retry on 503 only. Report the files you changed." },
   ];
   run = step(run, (current, now) => addBatch(current, { title: "Audit the three services for missing request timeouts and add them", reason: run.reason, warnings: ["billing and notify both list shared/http"], followUp: false }, now), "lead", 5);
   for (const [index, packet] of packets.entries()) {
@@ -192,7 +193,7 @@ function delegationRun(): { run: Run; extra: Record<string, Extra> } {
   run = step(run, (current, now) => {
     const added = ok(addTasks(current, [{ title: "Set a 30 s default timeout in shared/http and keep explicit timeouts as they are", detail: "In shared/http/client.ts set the default timeout to 30 s. Calls that pass their own timeout keep it. Run the whole test suite and report failures.", role: "notify" }], "lead", now));
     let next = upsertMember(added, { ...packets[2]!, task: "In shared/http/client.ts set the default timeout to 30 s. Calls that pass their own timeout keep it. Run the whole test suite and report failures." }, now);
-    next = { ...next, tasks: next.tasks.map((task) => (task.id === "T4" ? { ...task, state: "doing" as const, owner: "term_notify", ownerTitle: "notify#C3B2" } : task)) };
+    next = { ...next, tasks: next.tasks.map((task) => (task.id === "T4" ? { ...task, state: "doing" as const, owner: "term_notify", ownerTitle: "notify" } : task)) };
     return attachPacket(next, "T4");
   }, "lead", 3);
   run = note(run, [{ component: "contexts", action: "continue", direction: "out", from: "plugin", to: ["term_notify"], subject: "notify", note: "" }], 1);

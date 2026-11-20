@@ -188,7 +188,8 @@ describe("delegation through agent-team", () => {
     // Plain words, as the CLI sends them.
     expect((await shim(checker, "report", { text: "Wrote checks/a.check", message: "Wrote checks/a.check", result: "Wrote checks/a.check" })).isError).toBe(false);
     const run = store.leadRun("lead1", false)!;
-    expect(run.members.map((member) => [member.title.split("#")[0], member.state, member.result])).toEqual([["writer", "done", "Wrote notes/a.txt"], ["checker", "done", "Wrote checks/a.check"]]);
+    // Members are named after their roles.
+    expect(run.members.map((member) => [member.title, member.state, member.result])).toEqual([["writer", "done", "Wrote notes/a.txt"], ["checker", "done", "Wrote checks/a.check"]]);
 
     const waited = await shim("lead1", "wait", { timeoutSeconds: 5 });
     expect(waited.text).toContain("Every member has finished");
@@ -213,7 +214,7 @@ describe("delegation through agent-team", () => {
     expect(launch.surface).toBe("chat");
     expect(LAUNCH_MARKER.test(launch.prompt)).toBe(false);
     expect(launch.prompt).toContain("'/plugins/ensemble/bin/agent-team' status");
-    expect(delegated.text).toContain("(writer, codex/gpt-5.5): started");
+    expect(delegated.text).toContain("- writer (codex/gpt-5.5): started");
     expect(store.member(launch.terminalId)?.surface).toBe("chat");
     expect(launch.prompt).toContain("Write notes/a.txt");
   });
@@ -259,6 +260,67 @@ describe("delegation through agent-team", () => {
     await store.setLead(lead("delegation", "zh"));
     const reply = await shim("lead1", "delegate", { tasks: [{ role: "nobody", task: "x" }] });
     expect(reply.text).toContain("未知角色");
+  });
+});
+
+const pooled = (mode: Team["mode"]): Team => {
+  const checked = checkTeam({
+    version: 1,
+    name: "pool",
+    mode,
+    lead: { agent: "claude", model: "haiku", surface: "terminal" },
+    roles: [],
+    candidates: [
+      { name: "fast", agent: "claude", model: "haiku", surface: "terminal", notes: "Good at small edits." },
+      { name: "gpt-5.5", agent: "codex", model: "gpt-5.5", surface: "terminal", notes: "Good at tests." },
+    ],
+  });
+  if (!checked.ok) throw new Error(checked.errors.join("\n"));
+  return checked.team;
+};
+
+describe("work for candidates", () => {
+  it("goes under a job name: the role is formed on the candidate and its member is named after it", async () => {
+    await store.setLead({ ...lead("delegation"), team: pooled("delegation") });
+    const delegated = await shim("lead1", "delegate", { tasks: [{ role: "tester", candidate: "gpt-5.5", task: "Write checks/a.check" }], title: "Checks" });
+    expect(delegated.isError).toBe(false);
+    expect(delegated.text).toContain("- tester (codex/gpt-5.5): started");
+    expect(fake.launched.map((entry) => [entry.agent, entry.model])).toEqual([["codex", "gpt-5.5"]]);
+    expect(store.sessionRoles("lead1")).toMatchObject([{ name: "tester", candidate: "gpt-5.5", agent: "codex", model: "gpt-5.5", folders: [], instructions: "Good at tests." }]);
+    const run = store.leadRun("lead1", false)!;
+    expect(run.members.map((member) => [member.role, member.title])).toEqual([["tester", "tester"]]);
+    // Later work for the job uses the role alone.
+    await shim(fake.launched[0]!.terminalId, "report", { result: "Wrote checks/a.check" });
+    expect((await shim("lead1", "delegate", { tasks: [{ role: "tester", task: "Write checks/b.check" }] })).isError).toBe(false);
+  });
+
+  it("refuses a candidate's own name as the role, and a formed role on another candidate", async () => {
+    await store.setLead({ ...lead("delegation"), team: pooled("delegation") });
+    const bare = await shim("lead1", "delegate", { tasks: [{ role: "gpt-5.5", task: "Write checks/a.check" }] });
+    expect(bare.isError).toBe(true);
+    expect(bare.text).toContain('gpt-5.5 is a candidate, not a job. Name the job in role (such as api, tester or docs) and the candidate in candidate: {"role": "tester", "candidate": "gpt-5.5"}.');
+    expect((await shim("lead1", "delegate", { tasks: [{ role: "fast", candidate: "gpt-5.5", task: "x" }] })).text).toContain("fast is a candidate, not a job");
+    expect((await shim("lead1", "delegate", { tasks: [{ role: "tester", candidate: "slow", task: "x" }] })).text).toContain('There is no candidate "slow"');
+    expect(fake.launched).toEqual([]);
+    expect(store.sessionRoles("lead1")).toEqual([]);
+    await shim("lead1", "delegate", { tasks: [{ role: "tester", candidate: "gpt-5.5", task: "x" }] });
+    expect((await shim("lead1", "delegate", { tasks: [{ role: "tester", candidate: "fast", task: "y" }] })).text).toContain("tester runs on gpt-5.5");
+  });
+
+  it("forms the roles a brief names with candidates when it is recorded", async () => {
+    await store.setLead({ ...lead("team"), team: pooled("team") });
+    const recorded = await shim("lead1", "brief", {
+      brief: { title: "Todo", goal: "A todo list", requirements: ["three items"], acceptance: ["three lines"] },
+      tasks: [{ title: "Write the list", role: "writer", candidate: "fast" }, { title: "Write the checks", role: "tester", candidate: "gpt-5.5", after: [1] }],
+    });
+    expect(recorded.isError).toBe(false);
+    expect(store.sessionRoles("lead1").map((role) => [role.name, role.candidate])).toEqual([["writer", "fast"], ["tester", "gpt-5.5"]]);
+    await store.setPendingBrief("lead1", { ...store.pendingBrief("lead1")!, confirmedBy: "panel" });
+    expect((await shim("lead1", "kickoff", { userConfirmation: "confirmed in panel" })).isError).toBe(false);
+    expect(store.leadRun("lead1", true)!.members.map((member) => member.title).sort()).toEqual(["tester", "writer"]);
+    const refused = await shim("lead1", "brief", { brief: { title: "Again", goal: "g", requirements: ["r"], acceptance: ["a"] }, tasks: [{ title: "t", role: "fast" }] });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain("fast is a candidate, not a job");
   });
 });
 

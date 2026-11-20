@@ -26,7 +26,7 @@ export interface ApiDeps {
   problems(): string[];
 }
 
-export function runView(run: Run): RunView {
+export function runView(run: Run, memberOf: (agentId: string) => { agent: string; model?: string } | undefined = () => undefined): RunView {
   return {
     id: run.id,
     mode: run.mode,
@@ -39,7 +39,10 @@ export function runView(run: Run): RunView {
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     brief: run.brief ? { title: run.brief.title, goal: run.brief.goal, acceptance: run.brief.acceptance } : null,
-    members: run.members.map((member) => ({ role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: excerpt(member.task, 280), retired: member.retired })),
+    members: run.members.map((member) => {
+      const record = memberOf(member.agentId);
+      return { role: member.role, agentId: member.agentId, title: member.title, state: member.state, task: excerpt(member.task, 280), retired: member.retired, agent: record?.agent ?? null, model: record?.model ?? null };
+    }),
     tasks: run.tasks.map((task) => ({ id: task.id, title: excerpt(task.title, 160), role: task.role, state: task.state, ownerTitle: task.ownerTitle, waitingOn: task.state === "todo" ? task.deps.filter((dep) => taskOf(run, dep)?.state !== "done") : [], plan: task.plan?.status ?? null, sentBack: task.feedback !== "" && task.state !== "done" })),
     posts: run.posts.slice(-40).map((post) => ({ seq: post.seq, round: post.round, author: post.author, kind: post.kind, text: excerpt(post.text, 600), to: post.to, at: post.at })),
     postCount: run.posts.length,
@@ -117,7 +120,7 @@ async function leadView(deps: ApiDeps & { live: (terminalId: string) => string |
     roles: lead.roles.map((role) => ({ name: role.name, candidate: role.candidate, agent: role.agent, model: role.model })),
     members: deps.store.members().filter((member) => member.leadTerminalId === lead.terminalId).map((member) => ({ terminalId: member.terminalId, role: member.role, title: member.title, agent: member.agent, model: member.model, state: deps.live(member.terminalId) ?? "unknown" })),
     pendingBrief: pendingView(lead),
-    run: run ? runView(run) : null,
+    run: run ? runView(run, (agentId) => deps.store.member(agentId)) : null,
     runCount: deps.store.allRuns().filter((entry) => entry.leadAgentId === lead.terminalId).length,
   };
 }
@@ -395,7 +398,7 @@ export function createApi(deps: ApiDeps) {
       const run = store.get(runId);
       return run ? detailView(run, deps) : null;
     },
-    leadRuns: async ({ terminalId }: { terminalId: string }) => store.allRuns().filter((run) => run.leadAgentId === terminalId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(runView),
+    leadRuns: async ({ terminalId }: { terminalId: string }) => store.allRuns().filter((run) => run.leadAgentId === terminalId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((run) => runView(run, (agentId) => store.member(agentId))),
     setMode,
     confirmBrief,
     openReport,

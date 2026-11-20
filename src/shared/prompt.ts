@@ -63,8 +63,8 @@ function formingRules(): string[] {
     "## Assigning work to candidates",
     "- A candidate is a model, not a job: nothing about it is fixed except what its description says. Give each piece of work to the candidate whose description says it is good at or suited for that kind of work, and weigh cost and speed when the description gives them. A candidate without a description is a general member: give it work its model is suited for.",
     "- Treat what a description says a candidate must not do as a hard rule: never give it that work, also not as part of a larger task. When no candidate fits a piece of work, do it yourself or tell the user.",
-    `- You can give work straight to a candidate by its name, as the role in \`${T.delegate}\` or in a team task.`,
-    `- When the same model should take on a narrower job (its own instructions or folders, or two jobs on one model), form a role with \`${T.role}\`: a short lowercase name, the candidate, instructions and folders. A role can only run on a candidate's agent and model.`,
+    `- Give work to a candidate under a job name: in \`${T.delegate}\` or a team task, set role to a short lowercase name for the job (such as api, tester or docs) and candidate to the candidate that does it. The role is formed for this session on that candidate, with its description as notes, and its member is named after the role. Use the same role name for later work on the same job. A candidate's own name is not a role.`,
+    `- To give a role its own instructions or folders, or move it to another candidate, use \`${T.role}\`: a short lowercase name, the candidate, instructions and folders. A role can only run on a candidate's agent and model.`,
     "- Fixed roles stay available next to the candidates. When you split work, say in one line which candidate gets what and why, citing its description.",
   ];
 }
@@ -201,7 +201,7 @@ function boardProtocol(run: Run): string[] {
     `- When a task is finished, mark it done (action "done", id, result: what you changed and how you checked it). Then take the next ready task: tasks for your role first, then tasks for anyone.`,
     `- Work you find that someone else should do: add a task (action "add", with its role). A task you can't finish: put it back (action "release") and say why on the board.`,
     `- Before editing files outside your tasks' files, claim them with \`${M.claim}\`. A path another member holds is refused: ask them on the board.`,
-    `- Messages: post with \`${M.post}\` and set \`to\` to roles, a member's title (such as api#1A2B), "lead" or "${TO_ALL}". Messages for you arrive in the output of any ${TEAM_BIN} command you run, and wake you when you are idle. Answer questions addressed to you.`,
+    `- Messages: post with \`${M.post}\` and set \`to\` to roles, a member's title (such as api 2), "lead" or "${TO_ALL}". Messages for you arrive in the output of any ${TEAM_BIN} command you run, and wake you when you are idle. Answer questions addressed to you.`,
     `- When no ready task is left for you, post "done" with a short summary and end your turn. The plugin wakes you when a task opens up for you.`,
   ];
 }

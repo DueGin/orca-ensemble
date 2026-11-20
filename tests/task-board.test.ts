@@ -3,7 +3,7 @@ import {
   addPost, addTasks, assignTasks, claimTask, completeTask, createRun, dispatchPlan, finishMember, inboxOf, inboxText, leadInbox, markInbox,
   markPlansNotified, MAX_DISPATCHES, mayTake, nextStep, normalizeRun, pendingPlans, rejectTask, releaseTask, retireRole, reviewPlan, runFinished, startRound,
   submitPlan, taskBoardText, taskOf, taskReady, unstaffedRoles, updateMember, updateTasks, upsertMember, waitingOn, TO_ALL, type Run,
-  claimPaths, markVerdictsDelivered, retireMember, touchMember, undeliveredVerdicts,
+  claimPaths, markVerdictsDelivered, retireMember, touchMember, undeliveredVerdicts, memberName, memberTitle,
 } from "../src/shared/collab";
 
 const T = "2026-11-12T00:00:00.000Z";
@@ -306,5 +306,19 @@ describe("review fixes", () => {
     run = { ...run, tasks: run.tasks.map((task) => ({ ...task, state: "doing" as const, owner: "d", ownerTitle: "docs#1" })) };
     expect(taskOf(finishMember(run, "d", "canceled", "stopped", T), "T1")).toMatchObject({ state: "dropped", result: "canceled: stopped" });
     expect(taskOf(finishMember(run, "d", "completed", "ok", T), "T1")).toMatchObject({ state: "done", result: "ok" });
+  });
+});
+
+describe("member names", () => {
+  it("are the role's name, numbered when the lead already has a member of that name", () => {
+    expect(memberTitle(" tester ")).toBe("tester");
+    expect(memberTitle("tester", ["api", "Tester"])).toBe("tester 2");
+    expect(memberTitle("tester", ["tester", "tester 2", "tester 4"])).toBe("tester 3");
+  });
+
+  it("read as the title alone when it is the role, else with the role", () => {
+    expect(memberName({ title: "tester", role: "tester" })).toBe("tester");
+    expect(memberName({ title: "tester 2", role: "tester" })).toBe("tester 2 (tester)");
+    expect(memberName({ title: "tester 2", role: "tester" }, true)).toBe("tester 2（tester）");
   });
 });

@@ -107,7 +107,7 @@
 .te-card.cand::before, .te-lead::before { display: none; }
 .te-card:focus-within { border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); box-shadow: 0 8px 28px rgb(0 0 0 / .1); }
 .te-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.te-avatar { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; font-weight: 760; font-size: 14px; flex: none; background: color-mix(in srgb, var(--tone) 17%, transparent); color: var(--tone); }
+.te-avatar { width: 32px; height: 32px; flex: none; }
 .te-card-name { display: block; width: 100%; min-width: 0; font-weight: 650; font-size: 14px; height: 32px; border: 1px solid transparent; background: transparent; border-radius: 7px; padding: 0 8px; outline: none; transition: border-color .12s, background .12s, box-shadow .12s; }
 .te-card-name:hover:not(:disabled) { border-color: var(--border); }
 .te-card-name:focus { border-color: var(--ring); background: var(--bg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent); }

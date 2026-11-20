@@ -5,7 +5,7 @@ import { TEAM_MODES, type TeamMode } from "../../shared/modes";
 import { runtimeLabel } from "../../shared/team";
 import type { AppState, LeadView } from "../../shared/views";
 import { t } from "../i18n";
-import { Badge, Button, Dot, Empty, Icon, Segmented, stateTone, useNow } from "../kit";
+import { AgentAvatar, Badge, Button, Dot, Empty, Icon, Segmented, stateTone, useNow } from "../kit";
 import { call } from "../orca";
 import { ComponentDetail, RunOverview, type ComponentPage } from "../run";
 
@@ -128,7 +128,10 @@ function Members({ lead }: { lead: LeadView }) {
             const state = member.runState === "attention" ? "blocked" : member.state;
             return (
               <button key={member.terminalId} type="button" className="card click row" style={{ padding: "6px 8px", textAlign: "left", opacity: member.retired ? 0.55 : 1 } as CSSProperties} onClick={() => void call("focus", { terminalId: member.terminalId })} title={t("app.focus")}>
-                <Dot tone={stateTone(state)} live={state === "working"} />
+                <span className="member-avatar" style={{ "--tone": stateTone(state) } as CSSProperties}>
+                  <AgentAvatar agent={member.agent} model={member.model} size={22} title={`${member.agent}${member.model ? ` · ${member.model}` : ""}`} />
+                  <span className={`member-state${state === "working" ? " live" : ""}`} />
+                </span>
                 <span className="grow stack" style={{ "--gap": "0px" } as CSSProperties}>
                   <span className="small strong ellipsis">{member.title}</span>
                   <span className="tiny muted ellipsis">{member.agent}{member.model ? `/${member.model}` : ""}</span>

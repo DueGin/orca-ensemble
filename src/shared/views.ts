@@ -15,7 +15,7 @@ export interface RunView {
   createdAt: string;
   updatedAt: string;
   brief: { title: string; goal: string; acceptance: string[] } | null;
-  members: { role: string; agentId: string; title: string; state: "working" | "done" | "attention" | "failed"; task: string; retired: boolean }[];
+  members: { role: string; agentId: string; title: string; state: "working" | "done" | "attention" | "failed"; task: string; retired: boolean; agent: string | null; model: string | null }[];
   tasks: { id: string; title: string; role: string | null; state: "todo" | "doing" | "done" | "dropped"; ownerTitle: string | null; waitingOn: string[]; plan: "pending" | "approved" | "rejected" | null; sentBack: boolean }[];
   posts: { seq: number; round: number; author: string; kind: string; text: string; to: string[]; at: string }[];
   postCount: number;

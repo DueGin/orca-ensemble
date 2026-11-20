@@ -35,8 +35,8 @@ const brief: Brief = {
 
 function makeRun(planApproval: boolean, mode: "team" | "delegation" = "team"): Run {
   let run = createRun({ id: "R1A2B3C4D", leadAgentId: "lead", workspaceId: "w", mode, title: "Login", planApproval, brief, language: "zh", now: NOW });
-  run = upsertMember(run, { role: "api", agentId: "a1", title: "api#1A2B", task: "" }, NOW);
-  run = upsertMember(run, { role: "fast", agentId: "f1", title: "fast#3C4D", task: "" }, NOW);
+  run = upsertMember(run, { role: "api", agentId: "a1", title: "api", task: "" }, NOW);
+  run = upsertMember(run, { role: "fast", agentId: "f1", title: "fast", task: "" }, NOW);
   return addTasks(run, [
     { title: "Schema", detail: "Add the users table.", role: "api", files: ["src/api/schema.ts"] },
     { title: "Page", role: "fast", after: ["1"] },
@@ -48,7 +48,7 @@ const role = { name: "api", folders: ["src/api"], instructions: "Owns the HTTP A
 const freeRole = { name: "fast", folders: [], instructions: "" };
 
 function withPlan(task: BoardTask, status: "approved" | "rejected", feedback: string): BoardTask {
-  return { ...task, state: "doing", owner: "a1", ownerTitle: "api#1A2B", feedback: "Missing tests", plan: { text: "Add a migration, then test it.", status, feedback, notified: false, delivered: false } };
+  return { ...task, state: "doing", owner: "a1", ownerTitle: "api", feedback: "Missing tests", plan: { text: "Add a migration, then test it.", status, feedback, notified: false, delivered: false } };
 }
 
 /** Every exported function, called with fixtures that cover its branches: [label, English output, Chinese output]. */

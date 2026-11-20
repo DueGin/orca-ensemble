@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { MODE_SPECS, TEAM_MODES, type TeamMode } from "../../shared/modes";
 import { blankTeam, candidateHandle, runtimeLabel } from "../../shared/team";
 import { t } from "../i18n";
-import { Button, Icon, Segmented } from "../kit";
+import { AgentAvatar, Button, Icon, Segmented } from "../kit";
 import { call } from "../orca";
 import { BrokenView } from "./Broken";
 import { FieldIssues, FolderChips, GrowText, hasError, IssuesContext, languageOptions, RuntimeEditor, Slot, Tool, useIssues, type LanguageChoice } from "./controls";
@@ -214,11 +214,10 @@ function RoleCard({ role, index, onChange, onDuplicate, onRemove }: { role: Role
   const nameIssues = useIssues(`${field}.name`);
   const folderIssues = useIssues(`${field}.folders`);
   const tone = ROLE_TONES[index % ROLE_TONES.length]!;
-  const initial = (role.name.trim()[0] ?? "?").toUpperCase();
   return (
     <article className="te-card" data-field={field} style={{ "--tone": tone } as CSSProperties}>
       <div className="te-card-head">
-        <span className="te-avatar">{initial}</span>
+        <AgentAvatar agent={role.agent ?? "unknown"} model={role.model} size={32} className="te-avatar" title={runtimeLabel(role)} />
         <div className="grow" data-field={`${field}.name`}>
           <input className={`te-card-name${hasError(nameIssues) ? " invalid" : ""}`} value={role.name} placeholder={t("editor.role.namePlaceholder")} aria-label={t("editor.role.name")} spellCheck={false} onChange={(event) => onChange({ ...role, name: event.target.value }, `${field}.name`)} />
         </div>
@@ -246,7 +245,7 @@ function CandidateCard({ candidate, index, onChange, onDuplicate, onRemove, onTe
   return (
     <article className="te-card cand" data-field={field}>
       <div className="te-card-head">
-        <span className="te-avatar cand"><Icon name="bot" size={15} /></span>
+        <AgentAvatar agent={candidate.agent ?? "unknown"} model={candidate.model} size={32} className="te-avatar cand" title={runtimeLabel(candidate)} />
         <div className="grow te-handle" data-field={`${field}.name`}>
           <span className="te-at" aria-hidden>@</span>
           <input className={`te-card-name${hasError(nameIssues) ? " invalid" : ""}`} value={candidate.name} placeholder={handle} aria-label={t("editor.candidate.handle")} title={t("editor.candidate.handleHint", { handle })} spellCheck={false} onChange={(event) => onChange({ ...candidate, name: event.target.value }, `${field}.name`)} />

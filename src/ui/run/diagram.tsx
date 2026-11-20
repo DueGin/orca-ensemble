@@ -5,7 +5,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProper
 import { componentsOf, type RunComponent, type RunEvent } from "../../shared/flow";
 import type { PendingBriefView, RunView } from "../../shared/views";
 import { t } from "../i18n";
-import { Icon, TONE } from "../kit";
+import { AgentAvatar, Icon, TONE } from "../kit";
 import { agoText, COMPONENT_ICON, componentColor, componentName, describeEvent, LIVE_MS, liveText, memberTone, partyName, summaryOf, tint, useWidth, type ComponentPage } from "./common";
 
 type Link = { party: string; component: RunComponent; direction: "in" | "out"; count: number; live: boolean };
@@ -149,10 +149,15 @@ export function FlowDiagram({ run, pending, now, live, leadId, selected, onOpen,
           {parties.map((party) => {
             const state = stateOf(party);
             const id = focusId(party);
+            const member = run.members.find((entry) => entry.agentId === party);
             const linked = links.filter((link) => link.party === party);
             return (
               <button key={party} type="button" className={`r-party-chip${party === "lead" ? " lead" : ""}`} disabled={!id || !onFocusAgent} onClick={() => id && onFocusAgent?.(id)} title={id && onFocusAgent ? t("report.focus") : state.text || undefined}>
-                <span className={`dot${state.pulse ? " live" : ""}`} style={{ "--tone": state.tone } as CSSProperties} />
+                {member ? (
+                  <AgentAvatar agent={member.agent ?? "unknown"} model={member.model} size={18} />
+                ) : (
+                  <span className={`dot${state.pulse ? " live" : ""}`} style={{ "--tone": state.tone } as CSSProperties} />
+                )}
                 <span className="ellipsis">{partyName(party, run.members)}</span>
                 {linked.some((link) => link.live) ? <span className="r-live-dot small" /> : null}
               </button>
@@ -214,7 +219,11 @@ export function FlowDiagram({ run, pending, now, live, leadId, selected, onOpen,
                 onMouseLeave={() => setHot(null)}
                 title={id && onFocusAgent ? t("report.focus") : undefined}
               >
-                <span className="r-party-icon" style={{ "--tone": state.tone } as CSSProperties}><Icon name={partyIcon(party)} size={13} /></span>
+                {member ? (
+                  <AgentAvatar agent={member.agent ?? "unknown"} model={member.model} size={26} className="r-party-avatar" title={`${member.agent ?? ""}${member.model ? ` · ${member.model}` : ""}`} />
+                ) : (
+                  <span className="r-party-icon" style={{ "--tone": state.tone } as CSSProperties}><Icon name={partyIcon(party)} size={13} /></span>
+                )}
                 <span className="r-party-text">
                   <span className="r-party-name ellipsis">{partyName(party, run.members)}</span>
                   {member ? (

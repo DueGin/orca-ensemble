@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { componentsOf, flowTotals, type RunComponent, type RunEvent } from "../../shared/flow";
 import type { PendingBriefView, RunDetail } from "../../shared/views";
 import { t } from "../i18n";
-import { Badge, Button, Chip, Empty, Icon, TONE } from "../kit";
+import { AgentAvatar, Badge, Button, Chip, Empty, Icon, TONE } from "../kit";
 import {
   aboutText, agoText, Bullets, COMPONENT_ICON, componentColor, componentName, durationText, EventRow, Field, History, liveText, LongText, memberTone, partyName, PartyTag, SectionTitle, tint, Usage, type ComponentPage,
 } from "./common";
@@ -386,14 +386,17 @@ export function BoardPage({ run, now, wide, onFocusAgent }: PageProps) {
       {!posts.length ? <Empty icon="messages">{t("flow.board.none")}</Empty> : null}
       {posts.map((post, index) => {
         const lead = post.author === "lead";
-        const author = lead ? t("flow.lead") : run.members.find((member) => member.agentId === post.agentId)?.title ?? post.author;
+        const poster = run.members.find((member) => member.agentId === post.agentId);
+        const author = lead ? t("flow.lead") : poster?.title ?? post.author;
         const newRound = index === 0 || posts[index - 1]!.round !== post.round;
         const tone = authorTone(post.agentId, post.author);
         return (
           <div key={post.seq} className="r-post-wrap">
             {newRound ? <div className="r-round-divider"><span>{run.mode === "team" ? t("session.round", { round: post.round, rounds: run.rounds }) : t("session.batch", { round: post.round })}</span></div> : null}
             <div className={`r-post${lead ? " lead" : ""}${post.kind === "brief" ? " brief" : ""}`} style={tint(KIND_TONE[post.kind] ?? "var(--muted-fg)")}>
-              <span className="r-avatar" style={{ "--tone": tone } as CSSProperties} title={author}>{lead ? <Icon name="crown" size={13} /> : initials(author)}</span>
+              <span className="r-avatar" style={{ "--tone": tone } as CSSProperties} title={author}>
+                {lead ? <Icon name="crown" size={13} /> : poster?.agent ? <AgentAvatar agent={poster.agent} model={poster.model} size={28} /> : initials(author)}
+              </span>
               <div className="r-bubble">
                 <div className="r-post-head">
                   <b className="ellipsis">{author}</b>
@@ -652,7 +655,7 @@ export function ContextsPage({ run, now, onFocusAgent }: PageProps) {
           return (
             <article key={member.agentId} className={`r-context${member.retired ? " retired" : ""}`}>
               <header className="r-context-head">
-                <span className="r-avatar" style={{ "--tone": tone } as CSSProperties}><Icon name="bot" size={14} /></span>
+                <span className="r-avatar" style={{ "--tone": tone } as CSSProperties}><AgentAvatar agent={member.agent ?? "unknown"} model={member.model} size={28} title={runtime ?? member.role} /></span>
                 <div className="grow" style={{ minWidth: 0 }}>
                   <PartyTag name={member.title} tone={tone} pulse={pulse} onClick={onFocusAgent ? () => onFocusAgent(member.agentId) : undefined} />
                   <div className="tiny muted">{member.role}</div>
