@@ -1,7 +1,7 @@
 {
   "name": "orca-ensemble",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "description": "Agent teams for Orca: a lead agent that runs a request as a team (intake, shared task board, mailbox, plan approval, file claims) or by delegation, with members on their own agents and models, a live data-flow dashboard and a visual team editor.",
   "license": "MIT",
