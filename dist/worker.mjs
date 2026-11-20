@@ -23443,7 +23443,8 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
       add: external_exports.array(external_exports.object({
         title: external_exports.string().min(1),
         detail: external_exports.string().optional(),
-        role: external_exports.string().optional().describe(tr("The role that should do it; omit for anyone", "\u5E94\u8BE5\u7531\u54EA\u4E2A\u89D2\u8272\u505A\uFF1B\u4E0D\u586B\u8868\u793A\u4EFB\u4F55\u4EBA")),
+        role: external_exports.string().optional().describe(tr("The role that should do it: a fixed or formed role, or a new job name such as tester (with candidate); omit for anyone", "\u5E94\u8BE5\u7531\u54EA\u4E2A\u89D2\u8272\u505A\uFF1A\u56FA\u5B9A\u89D2\u8272\u3001\u4F60\u5EFA\u7684\u89D2\u8272\uFF0C\u6216\u65B0\u7684\u5C97\u4F4D\u540D\uFF08\u4F8B\u5982 tester\uFF0C\u540C\u65F6\u586B candidate\uFF09\uFF1B\u4E0D\u586B\u8868\u793A\u4EFB\u4F55\u4EBA")),
+        candidate: external_exports.string().optional().describe(tr("For a new job name in role: the candidate that does it; the role is formed on it for this session", "role \u662F\u65B0\u5C97\u4F4D\u540D\u65F6\u586B\uFF1A\u7531\u54EA\u4E2A\u5019\u9009\u6210\u5458\u6765\u505A\uFF1B\u4F1A\u5728\u5B83\u4E0A\u9762\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u597D\u8FD9\u4E2A\u89D2\u8272")),
         after: external_exports.array(external_exports.string()).optional().describe(tr("Ids of tasks it waits for, such as T2", "\u5B83\u8981\u7B49\u5F85\u7684\u4EFB\u52A1\u7F16\u53F7\uFF0C\u4F8B\u5982 T2")),
         files: external_exports.array(external_exports.string()).optional()
       })).optional(),
@@ -23452,6 +23453,7 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
         title: external_exports.string().optional(),
         detail: external_exports.string().optional(),
         role: external_exports.string().nullable().optional().describe(tr("Reassign to a role, or null for anyone", "\u6539\u6D3E\u7ED9\u67D0\u4E2A\u89D2\u8272\uFF0Cnull \u8868\u793A\u4EFB\u4F55\u4EBA")),
+        candidate: external_exports.string().optional().describe(tr("For a new job name in role: the candidate that does it; the role is formed on it for this session", "role \u662F\u65B0\u5C97\u4F4D\u540D\u65F6\u586B\uFF1A\u7531\u54EA\u4E2A\u5019\u9009\u6210\u5458\u6765\u505A\uFF1B\u4F1A\u5728\u5B83\u4E0A\u9762\u4E3A\u672C\u4F1A\u8BDD\u5EFA\u597D\u8FD9\u4E2A\u89D2\u8272")),
         state: external_exports.enum(["todo", "dropped"]).optional().describe(tr("todo reopens (a done task needs feedback); dropped cancels", "todo \u91CD\u65B0\u6253\u5F00\uFF08\u5DF2\u5B8C\u6210\u7684\u4EFB\u52A1\u9700\u8981 feedback\uFF09\uFF1Bdropped \u53D6\u6D88")),
         after: external_exports.array(external_exports.string()).optional(),
         feedback: external_exports.string().optional().describe(tr("Why it is reopened or reassigned; the next owner reads it", "\u4E3A\u4EC0\u4E48\u91CD\u65B0\u6253\u5F00\u6216\u6539\u6D3E\uFF1B\u4E0B\u4E00\u4E2A\u8D1F\u8D23\u4EBA\u4F1A\u770B\u5230"))
@@ -23467,20 +23469,22 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
       const run = leadTeamRun(agent.id);
       if (!run || run.status !== "active") return fail(tr(`There is no team run in progress. Start one with ${L.kickoff} after intake.`, `\u6CA1\u6709\u8FDB\u884C\u4E2D\u7684\u56E2\u961F\u8FD0\u884C\u3002\u5B8C\u6210\u9700\u6C42\u5BF9\u63A5\u540E\u7528 ${L.kickoff} \u542F\u52A8\u3002`));
       const anyone = (role) => key(role) === "anyone" || role.trim() === "\u4EFB\u4F55\u4EBA";
-      const roleErrors = [...(add ?? []).map((task) => task.role), ...(update ?? []).map((change) => change.role)].filter((role) => typeof role === "string" && role.trim() !== "" && !anyone(role)).filter((role) => {
-        const spec = roleSpec(ctx, role);
-        return !spec || spec.name === HELPER;
-      }).map((role) => unknownRole(ctx, role));
-      if (roleErrors.length) return fail([...new Set(roleErrors)].join("\n"));
+      const named = [...add ?? [], ...update ?? []].filter((entry) => typeof entry.role === "string" && entry.role.trim() !== "" && !anyone(entry.role));
+      const resolved = jobRoles(ctx, named);
+      if (typeof resolved === "string") return fail(resolved);
+      const helperRole = named.find((entry) => roleSpec(resolved.ctx, entry.role)?.name === HELPER);
+      if (helperRole) return fail(unknownRole(ctx, helperRole.role));
+      if (resolved.formed.length) await store.setSessionRoles(agent.id, resolved.ctx.sessionRoles);
+      const roleName = (role) => roleSpec(resolved.ctx, role)?.name ?? role;
       const errors = [];
       await store.mutate(run.id, (current) => {
         let state = current;
         if (add?.length) {
-          const result = addTasks(state, add.map((task) => ({ ...task, role: task.role && !anyone(task.role) ? task.role : null })), "lead", now());
+          const result = addTasks(state, add.map(({ candidate: _candidate, ...task }) => ({ ...task, role: task.role && !anyone(task.role) ? roleName(task.role) : null })), "lead", now());
           errors.push(...result.errors);
           state = result.run;
         }
-        for (const change of update ?? []) {
+        for (const { candidate: _candidate, ...change } of update ?? []) {
           const before = taskOf(state, change.id);
           if (before?.state === "done" && change.state === "todo") {
             const result2 = rejectTask(state, change.id, change.feedback ?? "", now());
@@ -23488,7 +23492,7 @@ ${check2.errors.map((error62) => `- ${error62}`).join("\n")}`);
             else state = updateTasks(result2.run, [{ ...change, state: void 0, feedback: void 0 }], now()).run;
             continue;
           }
-          const result = updateTasks(state, [{ ...change, role: change.role === void 0 ? void 0 : change.role && !anyone(change.role) ? change.role : null }], now());
+          const result = updateTasks(state, [{ ...change, role: change.role === void 0 ? void 0 : change.role && !anyone(change.role) ? roleName(change.role) : null }], now());
           errors.push(...result.errors);
           state = result.run;
           const after = taskOf(state, change.id);

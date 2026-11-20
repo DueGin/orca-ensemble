@@ -1390,7 +1390,8 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
       add: z.array(z.object({
         title: z.string().min(1),
         detail: z.string().optional(),
-        role: z.string().optional().describe(tr("The role that should do it; omit for anyone", "应该由哪个角色做；不填表示任何人")),
+        role: z.string().optional().describe(tr("The role that should do it: a fixed or formed role, or a new job name such as tester (with candidate); omit for anyone", "应该由哪个角色做：固定角色、你建的角色，或新的岗位名（例如 tester，同时填 candidate）；不填表示任何人")),
+        candidate: z.string().optional().describe(tr("For a new job name in role: the candidate that does it; the role is formed on it for this session", "role 是新岗位名时填：由哪个候选成员来做；会在它上面为本会话建好这个角色")),
         after: z.array(z.string()).optional().describe(tr("Ids of tasks it waits for, such as T2", "它要等待的任务编号，例如 T2")),
         files: z.array(z.string()).optional(),
       })).optional(),
@@ -1399,6 +1400,7 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
         title: z.string().optional(),
         detail: z.string().optional(),
         role: z.string().nullable().optional().describe(tr("Reassign to a role, or null for anyone", "改派给某个角色，null 表示任何人")),
+        candidate: z.string().optional().describe(tr("For a new job name in role: the candidate that does it; the role is formed on it for this session", "role 是新岗位名时填：由哪个候选成员来做；会在它上面为本会话建好这个角色")),
         state: z.enum(["todo", "dropped"]).optional().describe(tr("todo reopens (a done task needs feedback); dropped cancels", "todo 重新打开（已完成的任务需要 feedback）；dropped 取消")),
         after: z.array(z.string()).optional(),
         feedback: z.string().optional().describe(tr("Why it is reopened or reassigned; the next owner reads it", "为什么重新打开或改派；下一个负责人会看到")),
@@ -1414,20 +1416,24 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
       const run = leadTeamRun(agent.id);
       if (!run || run.status !== "active") return fail(tr(`There is no team run in progress. Start one with ${L.kickoff} after intake.`, `没有进行中的团队运行。完成需求对接后用 ${L.kickoff} 启动。`));
       const anyone = (role: string) => key(role) === "anyone" || role.trim() === "任何人";
-      const roleErrors = [...(add ?? []).map((task) => task.role), ...(update ?? []).map((change) => change.role)]
-        .filter((role): role is string => typeof role === "string" && role.trim() !== "" && !anyone(role))
-        .filter((role) => { const spec = roleSpec(ctx, role); return !spec || spec.name === HELPER; })
-        .map((role) => unknownRole(ctx, role));
-      if (roleErrors.length) return fail([...new Set(roleErrors)].join("\n"));
+      // Every role these changes name is checked first; new job names are formed on their candidates.
+      const named = [...(add ?? []), ...(update ?? [])].filter((entry): entry is typeof entry & { role: string } => typeof entry.role === "string" && entry.role.trim() !== "" && !anyone(entry.role));
+      const resolved = jobRoles(ctx, named);
+      if (typeof resolved === "string") return fail(resolved);
+      const helperRole = named.find((entry) => roleSpec(resolved.ctx, entry.role)?.name === HELPER);
+      if (helperRole) return fail(unknownRole(ctx, helperRole.role));
+      if (resolved.formed.length) await store.setSessionRoles(agent.id, resolved.ctx.sessionRoles);
+      // Tasks name the role as it is spelled where it was made.
+      const roleName = (role: string) => roleSpec(resolved.ctx, role)?.name ?? role;
       const errors: string[] = [];
       await store.mutate(run.id, (current) => {
         let state = current;
         if (add?.length) {
-          const result = addTasks(state, add.map((task) => ({ ...task, role: task.role && !anyone(task.role) ? task.role : null })), "lead", now());
+          const result = addTasks(state, add.map(({ candidate: _candidate, ...task }) => ({ ...task, role: task.role && !anyone(task.role) ? roleName(task.role) : null })), "lead", now());
           errors.push(...result.errors);
           state = result.run;
         }
-        for (const change of update ?? []) {
+        for (const { candidate: _candidate, ...change } of update ?? []) {
           const before = taskOf(state, change.id);
           if (before?.state === "done" && change.state === "todo") {
             const result = rejectTask(state, change.id, change.feedback ?? "", now());
@@ -1435,7 +1441,7 @@ function buildTools(lang: PromptLanguage): { lead: ToolDef[]; member: ToolDef[] 
             else state = updateTasks(result.run, [{ ...change, state: undefined, feedback: undefined } as TaskChange], now()).run;
             continue;
           }
-          const result = updateTasks(state, [{ ...change, role: change.role === undefined ? undefined : change.role && !anyone(change.role) ? change.role : null } as TaskChange], now());
+          const result = updateTasks(state, [{ ...change, role: change.role === undefined ? undefined : change.role && !anyone(change.role) ? roleName(change.role) : null } as TaskChange], now());
           errors.push(...result.errors);
           state = result.run;
           // A member that loses a task it is working on is told, so it stops instead of doing it twice.
