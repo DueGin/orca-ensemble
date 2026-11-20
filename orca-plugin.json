@@ -4,61 +4,170 @@
   "execution": "trusted-worker",
   "id": "ensemble",
   "name": "Ensemble",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Run a request with a team of agents: a lead that does intake, a shared task board, plan approval, messages and file claims (team mode), or splits the work across isolated members (delegation mode). Each role runs on its own agent CLI and model. Live data-flow dashboard, visual team editor, presets, and @team in any new agent.",
-  "author": { "name": "DueGin" },
+  "author": {
+    "name": "DueGin"
+  },
   "license": "MIT",
   "icon": "assets/icon.png",
   "repository": "https://github.com/DueGin/orca-ensemble",
-  "cover": { "path": "docs/images/run-report-team.png", "alt": "Run report of a team run: members and the live data flow to the brief, task board, plan approval, team board and file claims" },
+  "cover": {
+    "path": "docs/images/run-report-team.png",
+    "alt": "Run report of a team run: members and the live data flow to the brief, task board, plan approval, team board and file claims"
+  },
   "screenshots": [
-    { "path": "docs/images/run-report-team.png", "alt": "Run report of a team run: members, the live data-flow diagram and the latest flows" },
-    { "path": "docs/images/team-editor.png", "alt": "Team editor: collaboration mode cards, agent language, the lead's agent and model, and fixed roles" },
-    { "path": "docs/images/run-report-zh.png", "alt": "Run report in Chinese: the lead and two members with the data flow to the parts of team mode" },
-    { "path": "docs/images/team-editor-zh.png", "alt": "Team editor in Chinese" }
+    {
+      "path": "docs/images/run-report-team.png",
+      "alt": "Run report of a team run: members, the live data-flow diagram and the latest flows"
+    },
+    {
+      "path": "docs/images/team-editor.png",
+      "alt": "Team editor: collaboration mode cards, agent language, the lead's agent and model, and fixed roles"
+    },
+    {
+      "path": "docs/images/run-report-zh.png",
+      "alt": "Run report in Chinese: the lead and two members with the data flow to the parts of team mode"
+    },
+    {
+      "path": "docs/images/team-editor-zh.png",
+      "alt": "Team editor in Chinese"
+    }
   ],
-  "engines": { "orca": ">=1.4.259" },
+  "engines": {
+    "orca": ">=1.4.259"
+  },
   "pluginApi": 1,
   "main": "dist/worker.mjs",
   "contributes": {
     "panels": [
-      { "id": "dashboard", "title": "Ensemble", "icon": "bot", "entry": "dist/panel.html" }
+      {
+        "id": "dashboard",
+        "title": "Ensemble",
+        "icon": "bot",
+        "entry": "dist/panel.html"
+      }
     ],
     "customEditors": [
-      { "id": "team", "title": "Team", "extensions": [".team.json"], "entry": "dist/team-editor.html", "priority": "default" },
-      { "id": "run", "title": "Run report", "extensions": [".team-run.json"], "entry": "dist/run-report.html", "priority": "default" }
+      {
+        "id": "team",
+        "title": "Team",
+        "extensions": [
+          ".team.json"
+        ],
+        "entry": "dist/team-editor.html",
+        "priority": "default"
+      },
+      {
+        "id": "run",
+        "title": "Run report",
+        "extensions": [
+          ".team-run.json"
+        ],
+        "entry": "dist/run-report.html",
+        "priority": "default"
+      }
     ],
     "commands": [
-      { "id": "ensemble.openLatestReport", "title": "Ensemble: Open the latest run report" },
-      { "id": "ensemble.startHere", "title": "Ensemble: Start a team session" }
+      {
+        "id": "ensemble.openLatestReport",
+        "title": "Ensemble: Open the latest run report"
+      },
+      {
+        "id": "ensemble.startHere",
+        "title": "Ensemble: Start a team session"
+      }
     ],
     "statusBarItems": [
-      { "id": "teams", "text": "Teams", "icon": "bot", "tooltip": "Ensemble", "command": "ensemble.openLatestReport" }
+      {
+        "id": "teams",
+        "text": "Teams",
+        "icon": "bot",
+        "tooltip": "Ensemble",
+        "command": "ensemble.openLatestReport"
+      }
     ],
     "events": [
-      { "on": "agent.status.changed" },
-      { "on": "workspace.removed" }
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.removed"
+      }
     ],
     "hooks": [
-      { "event": "agent.launch.before" },
-      { "event": "agent.prompt.before" }
+      {
+        "event": "agent.launch.before"
+      },
+      {
+        "event": "agent.prompt.before"
+      }
     ],
     "settings": [
-      { "key": "language", "title": "Agent language", "description": "The language of the instructions the plugin gives agents, and of their replies, briefs and board posts. A team can set its own.", "type": "string", "enum": ["auto", "zh", "en"], "enumLabels": ["Follow Orca's language", "中文", "English"], "default": "auto" },
-      { "key": "nativeDirective", "title": "Start teams with @team", "description": "A new agent whose first prompt starts with @team becomes a team's lead: @team [team or preset name] [auto|team|delegation|none], then the request on the next lines.", "type": "boolean", "default": true },
-      { "key": "defaultTeam", "title": "Default team for @team", "description": "Team file or preset name used when @team names none and the project has more than one team.", "type": "string", "default": "", "placeholder": "web" }
+      {
+        "key": "language",
+        "title": "Agent language",
+        "description": "The language of the instructions the plugin gives agents, and of their replies, briefs and board posts. A team can set its own.",
+        "type": "string",
+        "enum": [
+          "auto",
+          "zh",
+          "en"
+        ],
+        "enumLabels": [
+          "Follow Orca's language",
+          "中文",
+          "English"
+        ],
+        "default": "auto"
+      },
+      {
+        "key": "nativeDirective",
+        "title": "Start teams with @team",
+        "description": "A new agent whose first prompt starts with @team becomes a team's lead: @team [team or preset name] [auto|team|delegation|none], then the request on the next lines.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "defaultTeam",
+        "title": "Default team for @team",
+        "description": "Team file or preset name used when @team names none and the project has more than one team.",
+        "type": "string",
+        "default": "",
+        "placeholder": "web"
+      }
     ]
   },
   "capabilities": [
-    { "kind": "workspace:read" },
-    { "kind": "workspace:write" },
-    { "kind": "workspace:create" },
-    { "kind": "agent:read" },
-    { "kind": "agent:launch" },
-    { "kind": "terminal:send" },
-    { "kind": "terminal:read" },
-    { "kind": "notifications:show" },
-    { "kind": "storage:own" },
-    { "kind": "settings:own" }
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "workspace:write"
+    },
+    {
+      "kind": "workspace:create"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "agent:launch"
+    },
+    {
+      "kind": "terminal:send"
+    },
+    {
+      "kind": "terminal:read"
+    },
+    {
+      "kind": "notifications:show"
+    },
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    }
   ]
 }

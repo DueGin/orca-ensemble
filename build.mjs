@@ -19,6 +19,8 @@ function allCss() {
 
 const watch = process.argv.includes("--watch");
 mkdirSync("dist", { recursive: true });
+// The frames' scripts are build intermediates: each is inlined into its .html, and Orca loads only the .html.
+mkdirSync("build/frames", { recursive: true });
 
 const common = { bundle: true, logLevel: "info", sourcemap: false, legalComments: "none" };
 const targets = [
@@ -31,14 +33,14 @@ const frames = [
   { name: "run-report", entry: "src/ui/run-report.tsx", title: "Run report" },
 ];
 for (const frame of frames) {
-  targets.push({ ...common, entryPoints: [frame.entry], outfile: `dist/${frame.name}.js`, platform: "browser", format: "iife", target: "es2022", jsx: "automatic", minify: !watch, define: { "process.env.NODE_ENV": watch ? '"development"' : '"production"' } });
+  targets.push({ ...common, entryPoints: [frame.entry], outfile: `build/frames/${frame.name}.js`, platform: "browser", format: "iife", target: "es2022", jsx: "automatic", minify: !watch, define: { "process.env.NODE_ENV": watch ? '"development"' : '"production"' } });
 }
 
 /** Each frame as one HTML file with its script inlined, so it also runs in a browser client's sandboxed frame. */
 function writeFrames() {
   const css = allCss();
   for (const frame of frames) {
-    const js = readFileSync(`dist/${frame.name}.js`, "utf8").replace(/<\/script/gi, "<\\/script");
+    const js = readFileSync(`build/frames/${frame.name}.js`, "utf8").replace(/<\/script/gi, "<\\/script");
     writeFileSync(`dist/${frame.name}.html`, `<!doctype html>\n<html><head><meta charset="utf-8"><title>${frame.title}</title><style>${css}</style></head><body><div id="root"></div><script>${js}</script></body></html>\n`);
   }
 }

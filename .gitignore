@@ -8,3 +8,6 @@ dev/fixtures.js
 dev/sidebar.js
 dev/*-harness.html
 dev/teams.js
+# Frame scripts: build intermediates, inlined into dist/*.html
+build/frames/
+dist/*.js
