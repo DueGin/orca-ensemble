@@ -1,7 +1,7 @@
 // A team: the lead (an agent CLI and model), fixed roles and a pool of candidate members, a collaboration mode and the
 // language the agents work in. Teams live in the project as `.agents/teams/<name>.team.json`, shared through git and
 // readable by the agents; the plugin's own editor opens them. Presets are teams kept by the plugin for every project.
-import { z } from "zod";
+import * as z from "zod";
 import { SURFACES } from "./agents";
 import { PROMPT_LANGUAGES, TEAM_MODES } from "./modes";
 

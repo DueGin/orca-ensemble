@@ -1,7 +1,7 @@
 // The team on Orca: lead and members are agent CLIs in Orca terminals; they reach the plugin through `agent-team`
 // commands, served here. This module holds the lead's context, starting and messaging members, moving a run along
 // (staffing, handing out tasks, review rounds, notices), and the commands themselves.
-import { z } from "zod";
+import * as z from "zod";
 import {
   addBatch, addPost, addTasks, assignTasks, attachPacket, batchToSummarize, briefText, claimPaths, claimTask, completeTask, confirmsBrief, createRun,
   DEFAULT_TEAM_ROUNDS, excerpt, finishMember, inboxOf, inboxText, leadInbox, markCollected, markInbox, markPlansNotified, markVerdictsDelivered, MAX_NUDGES,
