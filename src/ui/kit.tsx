@@ -1,6 +1,6 @@
 // Small building blocks shared by the panel, the team editor and the run report.
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { clientMark, modelMark, type Mark } from "../shared/agent-marks";
+import { clientMark, hasIds, modelMark, withIdSuffix, type Mark } from "../shared/agent-marks";
 
 // Lucide icons (MIT), the few the plugin draws, as path data on a 24 grid.
 const ICONS: Record<string, string> = {
@@ -66,10 +66,32 @@ export function Icon({ name, size = 14, style }: { name: string; size?: number; 
   );
 }
 
+/** Suffix numbers held by the gradient marks on screen; a number is reused once its mark unmounts. */
+const idSlots = new Set<number>();
+
+/** The SVG with ids of its own while this copy is mounted (see withIdSuffix), or null until it has them. */
+function useOwnIds(svg: string | null): string | null {
+  const needs = svg !== null && hasIds(svg);
+  const [slot, setSlot] = useState<number | null>(null);
+  useEffect(() => {
+    if (!needs) return;
+    let next = 0;
+    while (idSlots.has(next)) next += 1;
+    idSlots.add(next);
+    setSlot(next);
+    return () => {
+      idSlots.delete(next);
+    };
+  }, [needs]);
+  if (!needs) return svg;
+  return slot === null ? null : withIdSuffix(svg, `-e${slot}`);
+}
+
 /** A mark drawn from its SVG string: a fill="currentColor" mark takes the color around it. */
 function MarkSvg({ mark, className }: { mark: Mark; className?: string }) {
+  const svg = useOwnIds(mark.kind === "svg" ? mark.svg : null);
   if (mark.kind === "letter") return <span className={`${className ?? ""} mark-letter`}>{mark.letter}</span>;
-  return <span className={className} dangerouslySetInnerHTML={{ __html: mark.svg }} />;
+  return <span className={className} dangerouslySetInnerHTML={{ __html: svg ?? "" }} />;
 }
 
 /**
