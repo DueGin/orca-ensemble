@@ -75,7 +75,7 @@ Orca plugins can't give agents new tools, so the plugin puts a command, `agent-t
 
 **Permissions.** A member the plugin starts in a terminal runs with full access (`--dangerously-skip-permissions` for Claude, `--dangerously-bypass-approvals-and-sandbox` for Codex, the same arguments Orca's own Full access uses), so delegated work never waits on a prompt. A chat's permission is Orca's per-agent setting (Settings → Agents), which a launch can't change: set the agents you delegate to as chats to **Full access** there, or choose **Terminal (CLI)** for them in the team.
 
-**Agents.** claude, codex, omp and grok open as chats by default; pi always runs in a terminal (its chat starts and does nothing). omp takes its own `provider/model` ids and roles; its and pi's models are listed in the team editor from `omp --list-models` / `pi --list-models`.
+**Agents.** claude, codex, omp and grok open as chats by default; pi always runs in a terminal (its chat starts and does nothing). omp takes its own `provider/model` ids and roles; its and pi's models are listed in the team editor from `omp models --json` (OMP 19; `omp --list-models` before it) and `pi --list-models`.
 
 ### Requirements
 
@@ -199,7 +199,7 @@ Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 
 
 **权限。** 插件以命令行（终端）启动的成员一律完全访问（Claude 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox`，与 Orca 自己的「完全访问」用的参数相同），委派的工作不会停下来等授权。图形界面（聊天）的权限是 Orca 里按智能体的设置（设置 → 智能体），启动时无法改变：把要以图形界面委派的智能体在那里设为「**完全访问**」，或者在团队里给它们选「命令行」。
 
-**智能体。** claude、codex、omp、grok 默认以图形界面打开；pi 一律用命令行（它的聊天启动后不干活）。omp 使用它自己的 `provider/model` 和角色写法；团队编辑器里 omp 和 pi 的模型清单分别来自 `omp --list-models` 和 `pi --list-models`。
+**智能体。** claude、codex、omp、grok 默认以图形界面打开；pi 一律用命令行（它的聊天启动后不干活）。omp 使用它自己的 `provider/model` 和角色写法；团队编辑器里 omp 的模型清单来自 `omp models --json`（OMP 19；更早的版本用 `omp --list-models`），pi 的来自 `pi --list-models`。
 
 ### 要求
 
