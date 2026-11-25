@@ -9,7 +9,7 @@ var __export = (target, all) => {
 import { realpathSync } from "node:fs";
 import { createServer } from "node:net";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname2, join as join9 } from "node:path";
+import { dirname as dirname3, join as join10 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/shared/json.ts
@@ -270,6 +270,10 @@ var OrcaAdapter = class _OrcaAdapter {
   }
   get cliPath() {
     return this.cli;
+  }
+  /** The profile folder of the Orca this worker runs in: the one learned or guessed, else the platform default. */
+  get profilePath() {
+    return this.profile ?? defaultProfile();
   }
   /**
    * Runs `orca <args> --json` as the agent `as` when that agent's command is being handled (from its own shell: Orca
@@ -580,7 +584,7 @@ var OrcaAdapter = class _OrcaAdapter {
 // src/worker/api.ts
 import { existsSync as existsSync3 } from "node:fs";
 import { mkdir as mkdir2, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/shared/collab.ts
 var MEMBER_POST_KINDS = ["update", "finding", "question", "answer", "done"];
@@ -7501,7 +7505,6 @@ var MODEL_SUGGESTIONS = {
   codex: ["gpt-5.5", "gpt-5.5-codex", "o4-mini"],
   gemini: ["gemini-2.5-pro", "gemini-2.5-flash"]
 };
-var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var name = string2().trim().min(1);
 var optionalText = string2().trim().optional().transform((value) => value ? value : void 0);
 var RuntimeSchema = object({
@@ -10675,6 +10678,144 @@ async function resolveNamedTeam(orca2, root, name2, defaultTeam) {
   return null;
 }
 
+// src/worker/model-choices.ts
+var CLI_LISTS = /* @__PURE__ */ new Set(["pi", "omp"]);
+async function modelChoices(agent, wait, sources) {
+  const name2 = agent.trim();
+  const fromOrca = name2 ? await sources.orca(name2, wait).catch(() => null) : null;
+  if (fromOrca?.models.length) return { source: "orca", models: fromOrca.models, listing: fromOrca.listing };
+  const listing = fromOrca?.listing ?? false;
+  if (CLI_LISTS.has(name2)) {
+    const ids = await sources.cli(name2).catch(() => []);
+    if (ids.length) return { source: "cli", models: ids.map((id) => ({ id, label: id, isDefault: false, efforts: null })), listing };
+  }
+  return { source: "builtin", models: (MODEL_SUGGESTIONS[name2] ?? []).map((id) => ({ id, label: id, isDefault: false, efforts: null })), listing };
+}
+
+// src/worker/orca-models.ts
+import { randomUUID } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { createConnection } from "node:net";
+import { dirname as dirname2, join as join7 } from "node:path";
+var RUNTIME_FILE = "orca-runtime.json";
+var SHORT_SOCKET_DIR = "/tmp/.orca-daemon-";
+var MAX_ANSWER = 8 * 1024 * 1024;
+var LISTING_WAIT_MS = 4e4;
+var READ_MS = 1e4;
+function socketTrusted(endpoint, uid = process.getuid?.()) {
+  if (uid === void 0) return true;
+  try {
+    const socket = lstatSync(endpoint);
+    if (!socket.isSocket() || socket.uid !== uid) return false;
+    if (endpoint.startsWith(`${SHORT_SOCKET_DIR}${uid}/`)) {
+      for (const dir of [dirname2(endpoint), dirname2(dirname2(endpoint))]) {
+        const entry = lstatSync(dir);
+        if (!entry.isDirectory() || entry.uid !== uid || (entry.mode & 63) !== 0) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function runtimeOf(profile, trusted = socketTrusted) {
+  let meta2;
+  try {
+    meta2 = JSON.parse(readFileSync(join7(profile, RUNTIME_FILE), "utf8"));
+  } catch {
+    return null;
+  }
+  const transports = Array.isArray(meta2?.transports) ? meta2.transports : meta2?.transport ? [meta2.transport] : [];
+  const local = transports.find((entry) => {
+    const transport = entry;
+    return (transport?.kind === "unix" || transport?.kind === "named-pipe") && typeof transport.endpoint === "string" && transport.endpoint.length > 0;
+  });
+  if (!local || typeof meta2?.authToken !== "string" || !meta2.authToken) return null;
+  if (local.kind === "unix" && !trusted(local.endpoint)) return null;
+  return { endpoint: local.endpoint, token: meta2.authToken };
+}
+function readCatalog(runtime, params, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const id = randomUUID();
+    const socket = createConnection(runtime.endpoint);
+    let buffer = "";
+    let done = false;
+    const finish = (error2, value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error2) reject(error2);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error("Orca did not answer in time.")), timeoutMs);
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      if (buffer.length > MAX_ANSWER) return finish(new Error("Orca's answer was too large."));
+      for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        if (!line.trim()) continue;
+        let frame;
+        try {
+          frame = JSON.parse(line);
+        } catch {
+          return finish(new Error("Orca sent an answer that is not JSON."));
+        }
+        if (frame._keepalive === true || frame.id !== id) continue;
+        if (frame.ok === true) return finish(null, frame.result);
+        const message = typeof frame.error?.message === "string" ? frame.error.message : "Orca refused the request.";
+        return finish(Object.assign(new Error(message), { code: typeof frame.error?.code === "string" ? frame.error.code : void 0 }));
+      }
+    });
+    socket.on("error", (error2) => finish(error2));
+    socket.on("close", () => finish(new Error("Orca closed the connection.")));
+    socket.write(`${JSON.stringify({ id, authToken: runtime.token, method: "agentSession.modelCatalog", params })}
+`);
+  });
+}
+function modelListOf(answer) {
+  if (!answer || typeof answer !== "object") return null;
+  const raw = answer;
+  const listing = raw.listingInProgress === true;
+  if (!Array.isArray(raw.models)) return { models: [], listing };
+  const seen = /* @__PURE__ */ new Set();
+  const models = [];
+  for (const row of raw.models) {
+    const id = typeof row?.id === "string" ? row.id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const label = typeof row.label === "string" && row.label.trim() ? row.label.trim() : id;
+    const efforts = row.effortsKnown === false || !Array.isArray(row.efforts) ? null : row.efforts.flatMap((effort) => typeof effort?.value === "string" && effort.value ? [effort.value] : []);
+    const defaultEffort = typeof row.defaultEffort === "string" && row.defaultEffort ? row.defaultEffort : void 0;
+    models.push({ id, label, isDefault: row.isDefault === true, efforts, ...defaultEffort ? { defaultEffort } : {} });
+  }
+  return { models, listing };
+}
+var AGENT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+var OrcaModels = class {
+  constructor(profile, read = readCatalog, runtime = runtimeOf) {
+    this.profile = profile;
+    this.read = read;
+    this.runtime = runtime;
+  }
+  lists = /* @__PURE__ */ new Map();
+  async list(agent, wait = false) {
+    const name2 = agent.trim();
+    if (!AGENT_ID.test(name2)) return null;
+    const kept = this.lists.get(name2);
+    if (kept && kept.list.models.length && !kept.list.listing && Date.now() - kept.at < 6e4) return kept.list;
+    const runtime = this.runtime(this.profile());
+    if (!runtime) return null;
+    const ask = (params, timeoutMs) => this.read(runtime, { agent: name2, ...params }, timeoutMs).then(modelListOf, () => null);
+    let list = await ask({ savedOnly: true }, READ_MS) ?? await ask({}, READ_MS);
+    if (wait && (!list || !list.models.length || list.listing)) list = await ask({ waitForListing: true }, LISTING_WAIT_MS) ?? list;
+    if (list) this.lists.set(name2, { at: Date.now(), list });
+    return list;
+  }
+};
+
 // src/worker/api.ts
 function runView(run, memberOf2 = () => void 0) {
   return {
@@ -10772,16 +10913,17 @@ async function leadView(deps, lead) {
 }
 async function runReportFile(lead, runId) {
   const relative = `.agents/runs/${runId}.team-run.json`;
-  await mkdir2(join7(lead.path, ".agents", "runs"), { recursive: true });
-  const ignore = join7(lead.path, ".agents", ".gitignore");
+  await mkdir2(join8(lead.path, ".agents", "runs"), { recursive: true });
+  const ignore = join8(lead.path, ".agents", ".gitignore");
   if (!existsSync3(ignore)) await writeFile3(ignore, "# Ensemble plugin: run report links are local; team files are shared.\nruns/\n").catch(() => void 0);
-  await writeFile3(join7(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Ensemble run report. The run itself is kept by the plugin." }, null, 2) + "\n");
+  await writeFile3(join8(lead.path, relative), JSON.stringify({ agentTeamRun: runId, note: "Opens the Ensemble run report. The run itself is kept by the plugin." }, null, 2) + "\n");
   return relative;
 }
 var toLanguage = (value, fallback) => isPromptLanguage(value) ? value : fallback;
 function createApi(deps) {
   const { adapter, store: store2 } = deps;
   const orca2 = adapter.orca;
+  const orcaModels = deps.models ?? new OrcaModels(() => adapter.profilePath);
   async function projects() {
     const [list, workspaces] = await Promise.all([
       orca2.host.call("project.list", {}).then((result) => result.projects).catch(() => []),
@@ -10994,7 +11136,7 @@ ${prompt}`, surface: "terminal" });
       const settings = await deps.settings();
       const lang = toLanguage(language, settings.language === "auto" ? languageFromLocale(deps.locale()) : settings.language);
       let file = `${TEAMS_DIR}/${teamFileName(name2 || "team")}`;
-      for (let index = 2; existsSync3(join7(root, file)); index += 1) file = `${TEAMS_DIR}/${teamFileName(`${name2 || "team"}-${index}`)}`;
+      for (let index = 2; existsSync3(join8(root, file)); index += 1) file = `${TEAMS_DIR}/${teamFileName(`${name2 || "team"}-${index}`)}`;
       const launchId = newLaunchId();
       const prompt = plannerPrompt(goal, file, lang);
       await store2.addLaunch({ id: launchId, kind: "planner", prompt, systemPrompt: "", planner: { root, file, goal }, createdAt: (/* @__PURE__ */ new Date()).toISOString() });
@@ -11037,10 +11179,9 @@ ${prompt}`, focus: false });
       await advance(runId);
       return { ok: true };
     },
-    catalog: async () => {
-      const [pi, omp] = await Promise.all([adapter.piModels().catch(() => []), adapter.agentModels("omp").catch(() => [])]);
-      return { agents: [...KNOWN_AGENTS], models: { ...MODEL_SUGGESTIONS, ...pi.length ? { pi } : {}, ...omp.length ? { omp } : {} }, efforts: [...EFFORTS] };
-    },
+    // An agent's models for the team editor: Orca's own list, else its CLI's, else suggestions. `wait`: when Orca has no
+    // list yet, have it list them (as its model picker does when opened), which runs the agent's CLI.
+    agentModels: async ({ agent, wait }) => modelChoices(agent, wait === true, { orca: (name2, waiting) => orcaModels.list(name2, waiting), cli: (name2) => adapter.agentModels(name2) }),
     validateTeam: async ({ team }) => {
       const checked = checkTeam(team);
       return checked.ok ? { ok: true, team: checked.team } : { ok: false, errors: checked.errors };
@@ -11075,7 +11216,7 @@ ${prompt}`, focus: false });
 }
 
 // src/worker/hooks.ts
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 function shellWords(command) {
   const words = [];
   let current = "";
@@ -11163,7 +11304,7 @@ async function nativeLead(deps, input) {
 }
 var sourceText2 = (session) => session.source.kind === "file" ? session.source.file : session.source.kind === "preset" ? `the preset "${teamTitle(session.team)}"` : "the team chosen at start";
 async function onAgentLaunch(deps, event) {
-  const bin = join8(deps.pluginRoot, "bin");
+  const bin = join9(deps.pluginRoot, "bin");
   const env = { ...event.env, [ENV.socket]: deps.socket, [ENV.bin]: bin, [ENV.node]: deps.nodeBin, PATH: `${bin}:${event.env.PATH ?? process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}` };
   let words;
   try {
@@ -11236,11 +11377,11 @@ ${PLUGIN_MESSAGE_PREFIX} ${made.note}` : "") };
 
 // src/worker/main.ts
 var pluginRoot = (() => {
-  const here = dirname2(fileURLToPath(import.meta.url));
+  const here = dirname3(fileURLToPath(import.meta.url));
   try {
-    return realpathSync(join9(here, ".."));
+    return realpathSync(join10(here, ".."));
   } catch {
-    return join9(here, "..");
+    return join10(here, "..");
   }
 })();
 var locale = "en";
@@ -11249,7 +11390,7 @@ async function activate(orca2) {
   const adapter = new OrcaAdapter(orca2);
   const store2 = new Store(dataDir(pluginRoot));
   await store2.load();
-  initCollaboration(adapter, store2, (lead) => teamOfLead(orca2, lead), join9(pluginRoot, "bin", "agent-team"));
+  initCollaboration(adapter, store2, (lead) => teamOfLead(orca2, lead), join10(pluginRoot, "bin", "agent-team"));
   const problems = [];
   if (!adapter.cliPath) problems.push("The orca CLI was not found beside Orca, so members can't be started or messaged in the background.");
   const settings = async () => {

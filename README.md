@@ -48,6 +48,7 @@ Everything the team does is recorded as a **data flow**: who wrote into which pa
   - **Teams**: the project's team files (open one in the team editor), create a team, **plan a team with AI** (an agent reads the project, checks which agent CLIs you have and writes the team file), and the presets (copy one to the project, rename or delete it). The list follows the files: after you save a team in the editor, a renamed team shows here within a few seconds, and the refresh button reads the files again right away.
 - **Team editor**: `.agents/teams/*.team.json` files open in a visual editor (Orca's Source view still shows the JSON): mode cards, language, the lead's agent/model/effort, fixed roles (folders, instructions) and the candidate pool (described by what each is good at and must not do), inline validation, undo/redo, **Save** (⌘S), **Save as preset**, **Start a session**. Edits reach Orca as you type; the file changes when you save it in Orca.
   - **Chat or terminal**: for an agent Orca can open as a chat, each runtime (lead, role, candidate) has an **Opens as** choice: **Chat (GUI)**, Orca's own chat client, or **Terminal (CLI)**. claude, codex, grok, cursor, kimi and copilot default to a chat; pi and opencode default to a terminal, because a pi chat starts and stays idle on Orca 1.4.261. Where Orca refuses a chat, the agent starts in a terminal instead and the run says so. A chat has no PATH from the launch hook, so its first message carries the `agent-team` command's full path, and the plugin's messages reach it as Orca mail.
+  - **Models from Orca**: each model list offers the models Orca's own model picker shows for that agent, the ones of the account or gateway it runs on, with each model's name (for example `group/auto-claude-opus[1m]` · Claude Opus). The effort list follows the chosen model (Codex models that take `ultra` offer it). When Orca has no list for an agent yet, opening the list asks Orca to make one, as its picker does; an agent Orca can't list (not installed or signed in) keeps the plugin's suggestions, and the list says where it came from. Any model id can still be typed.
   - **pi models**: Orca passes pi only a `provider/id` model (`pi --list-models` lists them, with the provider). One provider's model can be written bare (`deepseek-v4.1-flash`) and is completed at start; the editor warns and names the choices otherwise. On an Orca that can't give pi a model at launch (before 1.4.261), a pi member starts in a terminal and the plugin adds pi's own `--model` and `--thinking` to its command line.
 - **Run report**: a full-width tab per run: the data-flow diagram, members, a Kanban task board, the brief, plans, a chat-like team board with read progress, file claims; for delegation the split, sub-agent contexts, reports and summary.
 - **`@team` in Orca's own new agent**: start any agent in terminal mode with a first prompt such as
@@ -75,7 +76,9 @@ Orca plugins can't give agents new tools, so the plugin puts a command, `agent-t
 
 **Permissions.** A member the plugin starts in a terminal runs with full access (`--dangerously-skip-permissions` for Claude, `--dangerously-bypass-approvals-and-sandbox` for Codex, the same arguments Orca's own Full access uses), so delegated work never waits on a prompt. A chat's permission is Orca's per-agent setting (Settings → Agents), which a launch can't change: set the agents you delegate to as chats to **Full access** there, or choose **Terminal (CLI)** for them in the team.
 
-**Agents.** claude, codex, omp and grok open as chats by default; pi always runs in a terminal (its chat starts and does nothing). omp takes its own `provider/model` ids and roles; its and pi's models are listed in the team editor from `omp --list-models` / `pi --list-models`.
+**Model lists.** Orca gives plugins no method for its model lists, so the worker reads them as Orca's own `orca` CLI does: it reads `orca-runtime.json` in Orca's profile folder (the local socket and its token) and sends one request, `agentSession.modelCatalog`, over that socket. It sends nothing else with the token, keeps no copy of it, and only connects to a socket owned by you. This is an Orca-internal request: if an Orca update changes it, the editor quietly falls back to the plugin's own suggestions.
+
+**Agents.** claude, codex, omp and grok open as chats by default; pi always runs in a terminal (its chat starts and does nothing). omp takes its own `provider/model` ids and roles; the team editor lists their models from Orca, like every agent's (falling back to `pi --list-models` when Orca has no list for pi).
 
 ### Requirements
 
@@ -172,6 +175,7 @@ Versions: each release is a git tag `vX.Y.Z`, the version in `orca-plugin.json` 
   - **团队**：项目里的团队文件（在团队编辑器里打开）、新建团队、**用 AI 规划团队**（一个 agent 阅读项目、查看你装了哪些 agent CLI，然后写出团队文件），以及预设（可复制到项目、重命名或删除）。列表会跟着文件更新：在团队编辑器里保存之后，改过名的团队几秒内就会显示新名字；右上角的刷新按钮会立即重读文件。
 - **团队编辑器**：`.agents/teams/*.team.json` 会用可视化编辑器打开（Orca 的 Source 视图仍可看 JSON）：模式卡片、语言、协调器的 agent / 模型 / 推理强度、固定角色（目录、说明）和候选成员池（写清擅长什么、不要交给它什么），即时校验、撤销重做、**保存**（⌘S）、**另存为预设**、**开始会话**。编辑会实时交给 Orca，保存文件时才写入磁盘。
   - **图形界面或命令行**：对 Orca 能以聊天打开的智能体，协调器、角色和候选成员各有一个**打开方式**选项：**图形界面**（Orca 自带的聊天客户端）或**命令行**（终端）。claude、codex、grok、cursor、kimi、copilot 默认图形界面；pi 和 opencode 默认命令行，因为在 Orca 1.4.261 上 pi 的聊天会启动后不干活。选图形界面但 Orca 打不开时，会改用终端启动，运行结果里会写明。聊天没有启动钩子给的 PATH，所以它的第一条消息里带着 `agent-team` 的完整路径，插件给它的消息以 Orca 邮件送达。
+  - **模型来自 Orca**：每个模型下拉列出的是 Orca 自己的模型选择器为该智能体显示的模型，也就是它所用账号或网关接入的模型，并附模型名称（例如 `group/auto-claude-opus[1m]` · Claude Opus）。推理强度跟随所选模型（支持 `ultra` 的 Codex 模型会多出这一档）。Orca 还没有某个智能体的列表时，打开下拉会请 Orca 去列，和它自己的选择器一样；Orca 列不出来的智能体（没装或没登录）保留插件自带的建议值，列表底部会注明来源。也可以直接输入任意模型 id。
   - **pi 的模型**：Orca 只把 `provider/id` 形式的模型交给 pi（`pi --list-models` 里有，前面是 provider）。只有一个 provider 有的模型可以只写模型名（如 `deepseek-v4.1-flash`），启动时自动补全；否则编辑器会提示并列出可选值。在无法在启动时给 pi 指定模型的 Orca（1.4.261 之前）上，pi 成员改用终端启动，插件把 pi 自己的 `--model` 和 `--thinking` 加到它的命令行上。
 - **运行报告**：每次运行一个全宽页面：数据流图、成员、看板式任务板、需求简报、计划审批、带已读进度的聊天式黑板、文件认领；委派模式下是任务拆分、子智能体上下文、结果汇报和汇总。
 - **在 Orca 自带的新建 agent 里用 `@team`**：以终端模式新建任意 agent，第一条消息这样写：
@@ -199,7 +203,9 @@ Orca 插件不能给 agent 加工具，所以插件通过 `agent.launch.before` 
 
 **权限。** 插件以命令行（终端）启动的成员一律完全访问（Claude 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox`，与 Orca 自己的「完全访问」用的参数相同），委派的工作不会停下来等授权。图形界面（聊天）的权限是 Orca 里按智能体的设置（设置 → 智能体），启动时无法改变：把要以图形界面委派的智能体在那里设为「**完全访问**」，或者在团队里给它们选「命令行」。
 
-**智能体。** claude、codex、omp、grok 默认以图形界面打开；pi 一律用命令行（它的聊天启动后不干活）。omp 使用它自己的 `provider/model` 和角色写法；团队编辑器里 omp 和 pi 的模型清单分别来自 `omp --list-models` 和 `pi --list-models`。
+**模型列表。** Orca 没有给插件提供读取模型列表的方法，所以 worker 按 Orca 自带的 `orca` 命令行的方式去读：读取 Orca 配置目录里的 `orca-runtime.json`（本地 socket 和它的 token），通过这个 socket 只发一个请求 `agentSession.modelCatalog`。插件不会用这个 token 发任何其他请求，也不保存它，只连接属于你本人的 socket。这是 Orca 的内部接口：如果 Orca 更新后它变了，编辑器会悄悄退回插件自带的建议值。
+
+**智能体。** claude、codex、omp、grok 默认以图形界面打开；pi 一律用命令行（它的聊天启动后不干活）。omp 使用它自己的 `provider/model` 和角色写法；团队编辑器里它们的模型和其他智能体一样来自 Orca（Orca 没有 pi 的列表时退回 `pi --list-models`）。
 
 ### 要求
 

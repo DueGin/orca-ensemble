@@ -7,7 +7,7 @@ import { effectiveMode, isPromptLanguage, isTeamMode, languageFromLocale, PLUGIN
 import { promptsFor } from "../shared/prompts";
 import { plannerPrompt } from "../shared/planner";
 import { teamFileName, TEAMS_DIR } from "../shared/team";
-import { blankTeam, checkTeam, EFFORTS, KNOWN_AGENTS, MODEL_SUGGESTIONS, newPresetId, teamTitle, type Preset, type Team } from "../shared/team";
+import { blankTeam, checkTeam, newPresetId, teamTitle, type Preset, type Team } from "../shared/team";
 import type { AppState, LeadView, PendingBriefView, ProjectView, RunDetail, RunView, StartInput } from "../shared/views";
 import type { OrcaAdapter } from "./adapter";
 import { surfaceOf, type Surface } from "../shared/agents";
@@ -15,11 +15,15 @@ import { LaunchRefused } from "./adapter";
 import { advance, resolveModel } from "./collab";
 import { newLaunchId, type LeadSession, type Store, type TeamSource } from "./store";
 import { readPresets, saveTeamFile, teamFiles, teamOfLead, writePresets } from "./teams";
+import { modelChoices } from "./model-choices";
+import { OrcaModels } from "./orca-models";
 
 export interface ApiDeps {
   /** An agent's state, events first, then a probe of its terminal. */
   live?: (terminalId: string) => string | null;
   adapter: OrcaAdapter;
+  /** Orca's own model lists (tests pass their own). */
+  models?: OrcaModels;
   store: Store;
   settings(): Promise<AppState["settings"]>;
   locale(): string;
@@ -140,6 +144,7 @@ const toLanguage = (value: unknown, fallback: PromptLanguage): PromptLanguage =>
 export function createApi(deps: ApiDeps) {
   const { adapter, store } = deps;
   const orca = adapter.orca;
+  const orcaModels = deps.models ?? new OrcaModels(() => adapter.profilePath);
 
   async function projects(): Promise<ProjectView[]> {
     const [list, workspaces] = await Promise.all([
@@ -416,11 +421,10 @@ export function createApi(deps: ApiDeps) {
       await advance(runId);
       return { ok: true };
     },
-    catalog: async () => {
-      // Agents and models the host can run: pi's own list (as provider/id) joins the built-in suggestions.
-      const [pi, omp] = await Promise.all([adapter.piModels().catch(() => [] as string[]), adapter.agentModels("omp").catch(() => [] as string[])]);
-      return { agents: [...KNOWN_AGENTS], models: { ...MODEL_SUGGESTIONS, ...(pi.length ? { pi } : {}), ...(omp.length ? { omp } : {}) }, efforts: [...EFFORTS] };
-    },
+    // An agent's models for the team editor: Orca's own list, else its CLI's, else suggestions. `wait`: when Orca has no
+    // list yet, have it list them (as its model picker does when opened), which runs the agent's CLI.
+    agentModels: async ({ agent, wait }: { agent: string; wait?: boolean }) =>
+      modelChoices(agent, wait === true, { orca: (name, waiting) => orcaModels.list(name, waiting), cli: (name) => adapter.agentModels(name) }),
     validateTeam: async ({ team }: { team: unknown }) => {
       const checked = checkTeam(team);
       return checked.ok ? { ok: true as const, team: checked.team } : { ok: false as const, errors: checked.errors };

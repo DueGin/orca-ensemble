@@ -1,6 +1,6 @@
 // Inputs the team editor is built from: a combobox with suggestions, a runtime editor (agent, model, effort), folder
 // chips, an auto-growing textarea, and the per-field problem messages.
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { CHAT_OFFERED, surfaceOf, type Surface } from "../../shared/agents";
 import type { PromptLanguage } from "../../shared/modes";
 import { EFFORTS, KNOWN_AGENTS, MODEL_SUGGESTIONS } from "../../shared/team";
@@ -9,6 +9,7 @@ import { Icon, Segmented } from "../kit";
 import { call } from "../orca";
 import type { RuntimeDraft } from "./draft";
 import type { Issue } from "./validate";
+import type { ModelChoices } from "../../worker/model-choices";
 
 /** The problems per field, for every input below the editor. */
 export const IssuesContext = createContext<(field: string) => Issue[]>(() => []);
@@ -63,18 +64,30 @@ export function GrowText({ value, onChange, placeholder, rows = 3, className, in
   return <textarea ref={ref} className={["te-textarea", className, invalid ? "invalid" : ""].filter(Boolean).join(" ")} rows={rows} value={value} placeholder={placeholder} spellCheck={false} onChange={(event) => onChange(event.target.value)} />;
 }
 
-/** A text input with a list of suggestions; any text is allowed. */
-export function Combo({ value, onChange, suggestions, placeholder, invalid, label, mono }: { value: string; onChange(value: string): void; suggestions: readonly string[]; placeholder?: string; invalid?: boolean; label: string; mono?: boolean }) {
+/** A suggestion: its value, and a label shown beside it when that says more (a model's name beside its id). */
+export type ComboItem = string | { value: string; label?: string };
+
+/**
+ * A text input with a list of suggestions; any text is allowed. `onOpen` runs each time the list opens (to fetch it),
+ * `loading` shows it is coming, and `note` says where the list comes from.
+ */
+export function Combo({ value, onChange, suggestions, placeholder, invalid, label, mono, loading, note, onOpen }: { value: string; onChange(value: string): void; suggestions: readonly ComboItem[]; placeholder?: string; invalid?: boolean; label: string; mono?: boolean; loading?: boolean; note?: string; onOpen?(): void }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listId = useId();
   const listRef = useRef<HTMLUListElement>(null);
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  useEffect(() => {
+    if (open) onOpenRef.current?.();
+  }, [open]);
   const query = value.trim().toLowerCase();
+  const options = useMemo(() => suggestions.map((item) => (typeof item === "string" ? { value: item, label: item } : { value: item.value, label: item.label?.trim() || item.value })), [suggestions]);
   const items = useMemo(() => {
-    if (!query || suggestions.some((item) => item.toLowerCase() === query)) return [...suggestions];
-    return suggestions.filter((item) => item.toLowerCase().includes(query));
-  }, [query, suggestions]);
-  const shown = open && items.length > 0;
+    if (!query || options.some((item) => item.value.toLowerCase() === query)) return options;
+    return options.filter((item) => item.value.toLowerCase().includes(query) || item.label.toLowerCase().includes(query));
+  }, [query, options]);
+  const shown = open && (items.length > 0 || !!loading || !!note);
 
   useEffect(() => {
     if (!shown || active < 0) return;
@@ -94,7 +107,7 @@ export function Combo({ value, onChange, suggestions, placeholder, invalid, labe
       setActive((index) => (items.length ? (index + step + items.length) % items.length : -1));
     } else if (event.key === "Enter" && shown && active >= 0 && items[active]) {
       event.preventDefault();
-      pick(items[active]!);
+      pick(items[active]!.value);
     } else if (event.key === "Escape" && shown) {
       event.stopPropagation();
       setOpen(false);
@@ -123,7 +136,7 @@ export function Combo({ value, onChange, suggestions, placeholder, invalid, labe
         onBlur={() => setOpen(false)}
         onKeyDown={onKeyDown}
       />
-      {suggestions.length ? (
+      {suggestions.length || onOpen ? (
         <button type="button" className="te-combo-toggle" tabIndex={-1} aria-label={label} onMouseDown={(event) => event.preventDefault()} onClick={(event) => {
           const input = event.currentTarget.previousElementSibling as HTMLInputElement | null;
           const focused = document.activeElement === input;
@@ -136,47 +149,124 @@ export function Combo({ value, onChange, suggestions, placeholder, invalid, labe
       ) : null}
       {shown ? (
         <ul className="te-combo-list" id={listId} role="listbox" ref={listRef}>
-          {items.map((item, index) => (
-            <li key={item} role="option" aria-selected={item.toLowerCase() === query} className={`${index === active ? "active" : ""}${item.toLowerCase() === query ? " on" : ""}`} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => pick(item)}>
-              <span className="mono">{item}</span>
-              {item.toLowerCase() === query ? <Icon name="check" size={12} /> : null}
+          {items.map((item, index) => {
+            const on = item.value.toLowerCase() === query;
+            return (
+              <li key={item.value} role="option" aria-selected={on} title={item.label !== item.value ? `${item.value} · ${item.label}` : item.value} className={`${index === active ? "active" : ""}${on ? " on" : ""}`} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => pick(item.value)}>
+                <span className="te-combo-item">
+                  <span className="mono">{item.value}</span>
+                  {item.label !== item.value ? <span className="te-combo-label">{item.label}</span> : null}
+                </span>
+                {on ? <Icon name="check" size={12} /> : null}
+              </li>
+            );
+          })}
+          {loading || note ? (
+            <li className="te-combo-note" role="presentation" aria-live="polite" onMouseDown={(event) => event.preventDefault()}>
+              {loading ? <span className="te-combo-spin" aria-hidden /> : null}
+              <span>{note}</span>
             </li>
-          ))}
+          ) : null}
         </ul>
       ) : null}
     </div>
   );
 }
 
-/** Model suggestions per agent: the built-in ones, and the models the host's agents list (pi's `provider/id` models). */
-let hostModels: Promise<Record<string, string[]>> | null = null;
-function useModelSuggestions(agent: string): string[] {
-  const [models, setModels] = useState<Record<string, string[]>>({});
-  useEffect(() => {
-    hostModels ??= call("catalog").then((catalog) => catalog.models ?? {}, () => ({}));
-    let live = true;
-    void hostModels.then((found) => live && setModels(found));
-    return () => {
-      live = false;
-    };
-  }, []);
+// ----- Each agent's models, from Orca's own lists
+
+/** An agent's models as the editor knows them: `asked` once Orca was asked to list them, `loading` while it does. */
+type ModelEntry = { choices: ModelChoices | null; loading: boolean; asked: boolean };
+const modelEntries = new Map<string, ModelEntry>();
+const modelListeners = new Set<() => void>();
+let modelVersion = 0;
+
+function setModelEntry(agent: string, entry: ModelEntry) {
+  modelEntries.set(agent, entry);
+  modelVersion += 1;
+  for (const listener of modelListeners) listener();
+}
+
+const builtinChoices = (agent: string): ModelChoices => ({ source: "builtin", models: (MODEL_SUGGESTIONS[agent] ?? []).map((id) => ({ id, label: id, isDefault: false, efforts: null })), listing: false });
+
+/** Reads the models Orca has saved for the agent, once per editor: this starts nothing in Orca. */
+function loadModels(agent: string) {
+  if (modelEntries.has(agent)) return;
+  setModelEntry(agent, { choices: null, loading: false, asked: false });
+  call("agentModels", { agent }).then(
+    (choices) => setModelEntry(agent, { ...modelEntries.get(agent)!, choices }),
+    () => setModelEntry(agent, { ...modelEntries.get(agent)!, choices: builtinChoices(agent) }),
+  );
+}
+
+/**
+ * When the list opens and Orca has no list for the agent yet (or is still listing it), asks Orca to list its models, as
+ * Orca's own model picker does when opened; once per agent per editor.
+ */
+function askForModels(agent: string) {
+  const entry = modelEntries.get(agent);
+  if (!entry || entry.asked || (entry.choices?.source === "orca" && !entry.choices.listing)) return;
+  setModelEntry(agent, { ...entry, asked: true, loading: true });
+  call("agentModels", { agent, wait: true }, 70_000).then(
+    (choices) => setModelEntry(agent, { choices, loading: false, asked: true }),
+    () => setModelEntry(agent, { ...modelEntries.get(agent)!, loading: false }),
+  );
+}
+
+function useModelChoices(agent: string): ModelEntry & { ask(): void } {
   const name = agent.trim();
-  return models[name]?.length ? models[name]! : MODEL_SUGGESTIONS[name] ?? [];
+  useSyncExternalStore(
+    (listener) => {
+      modelListeners.add(listener);
+      return () => modelListeners.delete(listener);
+    },
+    () => modelVersion,
+  );
+  useEffect(() => {
+    if (name) loadModels(name);
+  }, [name]);
+  const entry = (name && modelEntries.get(name)) || { choices: null, loading: false, asked: false };
+  return { ...entry, ask: () => name && askForModels(name) };
+}
+
+/** What the model list says about where it came from. */
+function modelNote(agent: string, entry: ModelEntry): string {
+  const name = agent.trim() || "?";
+  if (entry.loading) return t("editor.runtime.modelsAsking", { agent: name });
+  const choices = entry.choices;
+  if (!choices) return "";
+  if (choices.source === "orca") return t(choices.listing ? "editor.runtime.modelsOrcaListing" : "editor.runtime.modelsOrca", { count: choices.models.length });
+  if (choices.source === "cli") return t("editor.runtime.modelsCli", { agent: name });
+  return t(entry.asked ? "editor.runtime.modelsNone" : "editor.runtime.modelsSuggested", { agent: name });
 }
 
 /** The agent CLI, model and effort an agent runs on, and for an agent Orca can open as a chat, chat or terminal. */
 export function RuntimeEditor({ runtime, field, onChange }: { runtime: RuntimeDraft; field: string; onChange(runtime: RuntimeDraft, group: string): void }) {
-  const models = useModelSuggestions(runtime.agent);
+  const models = useModelChoices(runtime.agent);
   const agentIssues = useIssues(`${field}.agent`);
   const effort = runtime.effort ?? "";
-  const efforts: string[] = effort && !(EFFORTS as readonly string[]).includes(effort) ? [...EFFORTS, effort] : [...EFFORTS];
+  // The efforts Orca lists for the chosen model (or the agent's default model); the usual ones when it lists none.
+  const listed = models.choices?.models ?? [];
+  const chosen = runtime.model?.trim() ? listed.find((model) => model.id === runtime.model!.trim()) : listed.find((model) => model.isDefault);
+  const known: readonly string[] = chosen?.efforts ?? EFFORTS;
+  const efforts: string[] = effort && !known.includes(effort) ? [...known, effort] : [...known];
   return (
     <div className="te-runtime">
       <Slot field={`${field}.agent`} label={t("editor.runtime.agent")}>
         <Combo label={t("editor.runtime.agent")} value={runtime.agent} suggestions={KNOWN_AGENTS} placeholder="claude" invalid={hasError(agentIssues)} mono onChange={(agent) => onChange({ ...runtime, agent }, `${field}.agent`)} />
       </Slot>
       <Slot field={`${field}.model`} label={t("editor.runtime.model")}>
-        <Combo label={t("editor.runtime.model")} value={runtime.model ?? ""} suggestions={models} placeholder={t("editor.runtime.modelDefault")} mono onChange={(model) => onChange({ ...runtime, model: model || undefined }, `${field}.model`)} />
+        <Combo
+          label={t("editor.runtime.model")}
+          value={runtime.model ?? ""}
+          suggestions={listed.map((model) => ({ value: model.id, label: model.label }))}
+          loading={models.loading}
+          note={modelNote(runtime.agent, models)}
+          onOpen={models.ask}
+          placeholder={t("editor.runtime.modelDefault")}
+          mono
+          onChange={(model) => onChange({ ...runtime, model: model || undefined }, `${field}.model`)}
+        />
       </Slot>
       <Slot field={`${field}.effort`} label={t("editor.runtime.effort")}>
         <Select value={effort} label={t("editor.runtime.effort")} onChange={(value) => onChange({ ...runtime, effort: value || undefined }, `${field}.effort`)} options={[{ value: "", label: t("editor.runtime.effortDefault") }, ...efforts.map((item) => ({ value: item, label: item }))]} />

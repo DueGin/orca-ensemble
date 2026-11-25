@@ -121,6 +121,11 @@ export class OrcaAdapter {
     return this.cli;
   }
 
+  /** The profile folder of the Orca this worker runs in: the one learned or guessed, else the platform default. */
+  get profilePath(): string {
+    return this.profile ?? defaultProfile();
+  }
+
   /**
    * Runs `orca <args> --json` as the agent `as` when that agent's command is being handled (from its own shell: Orca
    * knows it as the one acting, and a launch shows in its chat as a handoff), else as the plugin.

@@ -101,7 +101,16 @@
 
   const focused = params.get("nofocus") === "1" ? null : { workspaceId: "ws-1", name: "proj", branch: "main", path: "/private/tmp/orca-new/proj", agents: [] };
   const fixtures = {
-    "api.catalog": () => ({ agents: ["claude", "codex", "gemini"], models: {}, efforts: ["low", "medium", "high", "xhigh", "max"] }),
+    // Orca's model list for an agent, as the worker answers it (a sample of what Orca 1.4.274 listed).
+    "api.agentModels": (input) => (input && input.agent === "claude"
+      ? { source: "orca", listing: false, models: [
+          { id: "group/auto-claude-opus[1m]", label: "Claude Opus · routing group", isDefault: true, efforts: ["low", "medium", "high", "xhigh", "max"] },
+          { id: "sidrune/claude-sonnet-5-5", label: "Sidrune Claude Sonnet 5.5", isDefault: false, efforts: ["low", "medium", "high", "xhigh", "max"] },
+          { id: "sidrune/claude-haiku-4-5", label: "Claude Haiku 4.5 (latest) · Sidrune", isDefault: false, efforts: [] },
+        ] }
+      : input && input.agent === "codex"
+        ? { source: "orca", listing: false, models: [{ id: "group/auto-gpt-sol", label: "GPT Sol · routing group", isDefault: true, efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }] }
+        : { source: "builtin", listing: false, models: [] }),
     "api.state": () => ({
       focused,
       leads: [],

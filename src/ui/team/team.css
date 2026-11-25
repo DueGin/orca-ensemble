@@ -162,10 +162,17 @@
 .te-combo-toggle { position: absolute; right: 3px; top: 3px; width: 26px; height: 26px; border: 0; background: transparent; color: var(--muted-fg); border-radius: 6px; display: grid; place-items: center; cursor: pointer; }
 .te-combo-toggle:hover:not(:disabled) { background: var(--muted); color: var(--fg); }
 .te-combo.open .te-combo-toggle svg { transform: rotate(180deg); }
-.te-combo-list { position: absolute; left: 0; top: calc(100% + 4px); z-index: 25; min-width: 100%; width: max-content; max-width: 280px; margin: 0; padding: 4px; list-style: none; background: var(--pop); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 34px rgb(0 0 0 / .26); max-height: 248px; overflow: auto; animation: te-in .12s ease-out; }
+.te-combo-list { position: absolute; left: 0; top: calc(100% + 4px); z-index: 25; min-width: 100%; width: max-content; max-width: min(440px, 92vw); margin: 0; padding: 4px; list-style: none; background: var(--pop); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 14px 34px rgb(0 0 0 / .26); max-height: 300px; overflow: auto; animation: te-in .12s ease-out; }
 .te-combo-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 9px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
 .te-combo-list li.active { background: var(--muted); }
 .te-combo-list li.on { color: var(--primary); font-weight: 650; }
+.te-combo-item { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.te-combo-item .mono { white-space: nowrap; }
+.te-combo-label { color: var(--muted-fg); font-size: 11.5px; font-weight: 450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.te-combo-list li.te-combo-note { position: sticky; bottom: -4px; margin: 4px -4px -4px; padding: 7px 13px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; background: var(--pop); color: var(--muted-fg); font-size: 11.5px; font-weight: 450; cursor: default; justify-content: flex-start; gap: 8px; }
+.te-combo-list li.te-combo-note:first-child { border-top: 0; margin-top: -4px; }
+.te-combo-spin { width: 11px; height: 11px; flex: none; border-radius: 50%; border: 1.6px solid var(--border); border-top-color: var(--primary); animation: te-spin .7s linear infinite; }
+@keyframes te-spin { to { transform: rotate(360deg); } }
 
 /* Folder chips */
 .te-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-height: 34px; padding: 4px 6px; border: 1px solid var(--input); border-radius: 8px; background: var(--bg); cursor: text; transition: border-color .12s, box-shadow .12s; }
